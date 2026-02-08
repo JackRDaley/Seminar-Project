@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Screen Time Manager</title>
+    <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+    <header class="header">
+    <div>
+        <div class="title">Screen Time Manager</div>
+        <div id="datetime" class="subtitle">—</div>
+    </div>
+    </header>
+
+    <main class="container">
+    <section class="card">
+        <div class="card-title">Active blocking</div>
+        <div id="activeSessions" class="muted">No active sessions.</div>
+    </section>
+
+    <section class="card">
+        <div class="card-title">Today (block list only)</div>
+        <div id="ranking" class="list muted">No data yet.</div>
+    </section>
+
+    <section class="card">
+        <div class="card-title">Block list</div>
+
+        <form id="addForm" class="row">
+        <input
+            id="domainInput"
+            type="text"
+            placeholder="Add domain (e.g. youtube.com)"
+            autocomplete="off"
+        />
+        <input
+            id="limitInput"
+            type="number"
+            min="1"
+            max="1440"
+            placeholder="min"
+            title="Daily limit (minutes)"
+        />
+        <button type="submit">Add</button>
+        </form>
+
+        <div id="blockList" class="list muted">No blocked sites yet.</div>
+    </section>
+    </main>
+
+    <footer class="footer">
+    <button id="refreshBtn" class="ghost">Refresh</button>
+    <span id="status" class="status"></span>
+    </footer>
+
+    <script src="popup.js"></script>
+</body>
+</html>
