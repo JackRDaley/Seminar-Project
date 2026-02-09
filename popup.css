@@ -1,0 +1,107 @@
+:root {
+	--bg: #0b1220;
+	--card: #111a2e;
+	--text: #e8eefc;
+	--muted: #9bb0d3;
+	--accent: #4c7dff;
+	--border: rgba(255, 255, 255, 0.10);
+}
+
+* { box-sizing: border-box; }
+body {
+	margin: 0;
+	width: 360px;
+	background: var(--bg);
+	color: var(--text);
+	font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+
+.header {
+	display: flex;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 12px 12px 8px;
+	border-bottom: 1px solid var(--border);
+}
+
+.title { font-weight: 700; font-size: 14px; }
+.subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.content { padding: 12px; display: grid; gap: 10px; }
+
+.card {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 10px;
+}
+
+.card-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 8px;
+}
+h2 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text); }
+
+.pill {
+	background: rgba(76,125,255,0.18);
+	border: 1px solid rgba(76,125,255,0.35);
+	color: #cfe0ff;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: 12px;
+}
+
+.list { display: grid; gap: 8px; }
+.muted { color: var(--muted); }
+
+.item {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 8px;
+	align-items: center;
+	padding: 8px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: rgba(255,255,255,0.03);
+}
+
+.item .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.item strong { font-weight: 700; }
+
+.row { display: flex; gap: 8px; margin-bottom: 10px; }
+.input {
+	flex: 1;
+	padding: 8px 10px;
+	border-radius: 10px;
+	border: 1px solid var(--border);
+	background: rgba(0,0,0,0.25);
+	color: var(--text);
+	outline: none;
+}
+.input.small { width: 74px; flex: 0 0 auto; }
+
+.btn {
+	padding: 8px 10px;
+	border-radius: 10px;
+	border: 1px solid rgba(76,125,255,0.45);
+	background: rgba(76,125,255,0.25);
+	color: var(--text);
+	cursor: pointer;
+}
+.btn.ghost {
+	border-color: var(--border);
+	background: transparent;
+	padding: 6px 9px;
+}
+.btn.danger {
+	border-color: rgba(255, 92, 92, 0.45);
+	background: rgba(255, 92, 92, 0.18);
+}
+
+.footer {
+	padding: 10px 12px 12px;
+	border-top: 1px solid var(--border);
+	font-size: 12px;
+}
