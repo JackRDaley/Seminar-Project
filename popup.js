@@ -162,13 +162,21 @@ function renderBlockList(blockedDomains, statsToday) {
 }
 
 async function removeDomain(domain) {
-    const { blockedDomains = {} } = await chrome.storage.local.get(["blockedDomains"]);
-    const next = { ...blockedDomains };
-    delete next[domain];
-    await chrome.storage.local.set({ blockedDomains: next });
+    const { blockedDomains = {}, statsToday = {}, activeBlocks = [] }
+        = await chrome.storage.local.get(["blockedDomains", "statsToday", "activeBlocks"]);
+    const nextBlocked = { ...blockedDomains };
+    delete nextBlocked[domain];
 
-    // Optional: tell background to stop tracking/blocking this domain
-    // chrome.runtime.sendMessage({ type: "UNBLOCK_DOMAIN", domain });
+    const nextStats = { ...statsToday };
+    delete nextStats[domain];;
+
+    const nextActive = (activeBlocks || []).filter((s) => s.domain !== domain);
+
+    await chrome.storage.local.set({
+        blockedDomains: nextBlocked,
+        statsToday: nextStats,
+        activeBlocks: nextActive
+    });
 }
 
 async function addDomain(domain, limitMinutes) {
@@ -176,9 +184,6 @@ async function addDomain(domain, limitMinutes) {
     const next = { ...blockedDomains };
     next[domain] = { limitMinutes };
     await chrome.storage.local.set({ blockedDomains: next });
-
-    // Optional: tell background to initialize tracking
-    // chrome.runtime.sendMessage({ type: "BLOCK_DOMAIN", domain, limitMinutes });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
