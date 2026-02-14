@@ -2,6 +2,34 @@
 // statsToday: { [domain]: { timeSec: number, visits: number } }
 // activeBlocks: [{ domain: string, endsAt: number|null, remainingSec?: number }]
 
+const KEYS = {
+    blockedDomains: "blockedDomains", // { [domain]: { limitMinutes } }
+    statsToday: "statsToday",         // { [domain]: { timeSec, visits, lastSeenDay } }
+    dayKey: "statsDayKey"             // "YYYY-MM-DD"
+};
+
+let activeTabId = null;
+let activeDomain = null;
+let activeStartMs = null;
+
+function getDayKey(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+function domainFromUrl(url) {
+    try {
+        const u = new URL(url);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        return u.hostname.replace(/^www\./, "");
+    } catch {
+        return null;
+    }
+}
+
+
 const $ = (id) => document.getElementById(id);
 
 function formatTime(sec) {
@@ -22,12 +50,93 @@ function normalizeDomain(input) {
     return d;
 }
 
+async function ensureDayReset() {
+    const { [KEYS.dayKey]: storedDay } = await chrome.storage.local.get([KEYS.dayKey]);
+    const today = getDayKey();
+    if (storedDay !== today) {
+        await chrome.storage.local.set({ [KEYS.statsToday]: {}, [KEYS.dayKey]: today });
+    }
+}
+
+async function addTime(domain, deltaMs) {
+    const { statsToday = {} } = await chrome.storage.local.get(["statsToday"]);
+    const cur = statsToday[domain] || { timeMs: 0, visits: 0 };
+    cur.timeMs = (cur.timeMs || 0) + deltaMs;
+    statsToday[domain] = cur;
+    await chrome.storage.local.set({ statsToday });
+}
+
+async function addVisit(domain) {
+    if (!domain) return;
+    await ensureDayReset();
+
+    const today = getDayKey();
+    const { [KEYS.statsToday]: stats = {} } = await chrome.storage.local.get([KEYS.statsToday]);
+
+    const cur = stats[domain] || { timeSec: 0, visits: 0, lastSeenDay: null };
+    // count a "visit" the first time we see this domain today (simple MVP)
+    if (cur.lastSeenDay !== today) {
+        cur.visits = (cur.visits || 0) + 1;
+        cur.lastSeenDay = today;
+    }
+    stats[domain] = cur;
+    await chrome.storage.local.set({ [KEYS.statsToday]: stats });
+}
+
+async function flushTime() {
+    if (!activeDomain || !activeStartMs) return;
+    const deltaMs = Date.now() - activeStartMs;
+    activeStartMs = Date.now(); // reset start for continued tracking
+    if (deltaMs > 0) await addTime(activeDomain, deltaMs);
+}
+
+async function setActiveDomain(tabId) {
+    await flushTime(); // close out previous
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const d = tab?.url ? domainFromUrl(tab.url) : null;
+    activeDomain = d;
+    activeStartMs = d ? Date.now() : null;
+}
+
+chrome.runtime.onInstalled.addListener(async () => {
+    await ensureDayReset();
+    // tick every second while worker is awake; alarms will wake it up too
+    chrome.alarms.create("tick", { periodInMinutes: 1 / 60 }); // 1 second
+});
+
+
 function setDateTime() {
     const now = new Date();
     const date = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const time = now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     $("datetime").textContent = `${date} • ${time}`;
 }
+
+// When user switches tabs
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    await setActiveDomain(tabId);
+});
+
+// When the active tab’s URL changes (navigation)
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    // If active tab navigates, treat as domain switch
+    if (changeInfo.url) {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (tab?.id === tabId) await setActive(tabId);
+    }
+});
+
+// When window focus changes (pause timing if Chrome not focused)
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+        await flushTime();
+        activeDomain = null;
+        activeStartMs = null;
+        return;
+    }
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab?.id != null) await setActiveDomain(tab.id);
+});
 
 async function loadAll() {
     setDateTime();
