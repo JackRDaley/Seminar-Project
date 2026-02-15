@@ -1,63 +1,68 @@
 <!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Screen Time Manager</title>
-    <link rel="stylesheet" href="popup.css" />
-</head>
-<body>
-    <header class="header">
-    <div>
-        <div class="title">Screen Time Manager</div>
-        <div id="datetime" class="subtitle">—</div>
-    </div>
-    </header>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Screen Time Manager</title>
+        <link rel="stylesheet" href="popup.css" />
+    </head>
 
-    <main class="container">
-    <section class="card">
-        <div class="card-header">
-            <h2>Active blocking</h2>
-            <span class="pill" id="activeCount">0</span>
-        </div>
-        <div id="activeList" class="list muted">No active sessions.</div>
-    </section>
+    <body>
+        <div class="bg"></div>
 
-    <section class="card">
-        <div class="card-title">Today (block list only)</div>
-        <div id="ranking" class="list muted">No data yet.</div>
-    </section>
+        <main class="wrap">
+        <!-- Active blocking -->
+        <section class="card">
+            <div class="card-head">
+            <div class="card-title">Active blocking</div>
+            <span class="chip">
+                <span class="dot"></span>
+                <span id="activeCount">0</span>
+            </span>
+            </div>
 
-    <section class="card">
-        <div class="card-title">Block list</div>
+            <div id="activeList" class="list muted">No active sessions.</div>
+        </section>
 
-        <form id="addForm" class="row">
-        <input
-            id="domainInput"
-            type="text"
-            placeholder="Add domain (e.g. youtube.com)"
-            autocomplete="off"
-        />
-        <input
-            id="limitInput"
-            type="number"
-            min="1"
-            max="1440"
-            placeholder="min"
-            title="Daily limit (minutes)"
-        />
-        <button type="submit">Add</button>
-        </form>
+        <!-- Ranking -->
+        <section class="card">
+            <div class="card-head">
+            <div class="card-title">Today (blocked sites)</div>
+            <div class="hint">Top time spent</div>
+            </div>
 
-        <div id="blockList" class="list muted">No blocked sites yet.</div>
-    </section>
-    </main>
+            <div id="ranking" class="list muted">No data yet.</div>
+        </section>
 
-    <footer class="footer">
-    <button id="refreshBtn" class="ghost">Refresh</button>
-    <span id="status" class="status"></span>
-    </footer>
+        <!-- Block list -->
+        <section class="card">
+            <div class="card-head">
+            <div class="card-title">Block list</div>
+            </div>
 
+            <form id="addForm" class="add-row">
+            <input
+                id="domainInput"
+                class="input"
+                type="text"
+                placeholder="Domain"
+                autocomplete="off"
+            />
+            <input
+                id="limitInput"
+                class="input input-min"
+                type="number"
+                min="1"
+                max="1440"
+                placeholder="min"
+                title="Daily limit (minutes)"
+            />
+            <button class="btn" type="submit">Add</button>
+            </form>
+
+            <div id="blockList" class="list muted">No blocked sites yet.</div>
+        </section>
+        </main>
+    </body>
     <script src="popup.js"></script>
-</body>
 </html>
