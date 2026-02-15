@@ -18,17 +18,7 @@ function normalizeDomain(input) {
     return d;
 }
 
-function setDateTime() {
-    const now = new Date();
-    const date = now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    const time = now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    $("datetime").textContent = `${date} • ${time}`;
-}
-
-
 async function loadAll() {
-    setDateTime();
-
     const { blockedDomains = {}, statsToday = {}, activeBlocks = [] } =
         await chrome.storage.local.get(["blockedDomains", "statsToday", "activeBlocks"]);
 
@@ -77,13 +67,9 @@ function renderActive(activeBlocks) {
 }
 
 async function stopActiveBlock(domain) {
-    // Option A: purely popup-side: remove from activeBlocks
     const { activeBlocks = [] } = await chrome.storage.local.get(["activeBlocks"]);
     const next = (activeBlocks || []).filter((s) => s.domain !== domain);
     await chrome.storage.local.set({ activeBlocks: next });
-
-    // Option B (better): notify background.js to stop timers, overlays, etc.
-    // chrome.runtime.sendMessage({ type: "STOP_BLOCK", domain });
 }
 
 function renderRanking(blockedDomains, statsToday) {
@@ -187,10 +173,7 @@ async function addDomain(domain, limitMinutes) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-    setDateTime();
-    setInterval(setDateTime, 1000 * 30);
-
-    $("refreshBtn").addEventListener("click", loadAll);
+    setInterval(loadAll, 2000);
 
     $("addForm").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -208,4 +191,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     await loadAll();
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+
+    if ( changes.statsToday || changes.blockedDomains || changes.activeBlocks ) {
+        loadAll();
+    }
 });
