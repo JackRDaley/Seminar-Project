@@ -8,6 +8,7 @@ const KEYS = {
     dayKey: "statsDayKey"             // "YYYY-MM-DD"
 };
 
+let activeTabId = null;
 let activeDomain = null;
 let activeStartMs = null;
 
@@ -89,6 +90,21 @@ function blockedUrl(domain) {
     return chrome.runtime.getURL(`blocked.html?d=${encodeURIComponent(domain)}`);
 }
 
+async function enforceIfNeeded(domain) {
+    if (!domain || activeTabId == null) return;
+
+    const { blockedDomains = {}, [KEYS.statsToday]: stats = {} } =
+        await chrome.storage.local.get([KEYS.blockedDomains, KEYS.statsToday]);
+
+    const limitMs = limitMsFor(domain, blockedDomains);
+    if (limitMs == null) return;
+
+    const usedMs = stats?.[domain]?.timeMs || 0;
+    if (usedMs >= limitMs) {
+        await chrome.tabs.update(activeTabId, { url: blockedUrl(domain) }).catch(() => {});
+    }
+}
+
 async function flushTime() {
     if (!activeDomain || !activeStartMs) return;
     const deltaMs = Date.now() - activeStartMs;
@@ -99,6 +115,7 @@ async function flushTime() {
 async function setActiveDomain(tabId, countVisit = false) {
     await flushTime();
 
+    activeTabId = tabId;
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const d = tab?.url ? domainFromUrl(tab.url) : null;
 
@@ -112,12 +129,24 @@ async function initActive() {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (tab?.id != null) await setActiveDomain(tab.id);
 }
-chrome.runtime.onStartup?.addListener?.(initActive);
-chrome.runtime.onInstalled.addListener(initActive);
+chrome.runtime.onStartup?.addListener(() => {
+    initActive();
+    chrome.alarms.create("enforce", { periodInMinutes: 1 })
+})
+
+chrome.runtime.onInstalled.addListener(() => {
+    initActive();
+    chrome.alarms.create("enforce", { periodInMinutes: 1 });
+});
 
 // When user switches tabs
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-    await setActiveDomain(tabId, true);
+chrome.tabs.onActivated.addListener(async ({ tabId }) => { await setActiveDomain(tabId, true) });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== "enforce") return;
+
+    await flushTime();                   // writes timeMs
+    await enforceIfNeeded(activeDomain); // redirects if over limit
 });
 
 // When the active tab’s URL changes (navigation)
@@ -150,6 +179,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) {
         await flushTime();
+        activeTabId = null;
         activeDomain = null;
         activeStartMs = null;
         return;
