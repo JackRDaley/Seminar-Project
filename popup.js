@@ -135,14 +135,24 @@ function renderBlockList(blockedDomains, statsToday) {
         div.innerHTML = `
             <div>
             <strong>${domain}</strong>
-            <div class="meta">Limit: ${limitMin} min • Today: ${formatTime(timeSec)} • ${st.visits || 0} visits</div>
+            <div class="meta">Limit: ${limitText} • Today: ${formatTime(timeSec)} • ${st.visits || 0} visits</div>
             </div>
-            <button class="btn danger" data-domain="${domain}">Remove</button>
+            <div style="display: flex; gap: 8px;">
+            <button class="btn" data-domain="${domain}" data-action="reset">Reset today</button>
+            <button class="btn danger" data-domain="${domain}" data-action="remove">Remove</button>
+            </div>
         `;
-        div.querySelector("button").addEventListener("click", async (e) => {
-            const d = e.currentTarget.getAttribute("data-domain");
-            await removeDomain(d);
-            await loadAll();
+        div.querySelectorAll("button").forEach((btn) => {
+            btn.addEventListener("click", async (e) => {
+                const d = e.currentTarget.getAttribute("data-domain");
+                const action = e.currentTarget.getAttribute("data-action");
+                if (action === "reset") {
+                    await resetDomainStats(d);
+                } else if (action === "remove") {
+                    await removeDomain(d);
+                }
+                await loadAll();
+            });
         });
         list.appendChild(div);
     });
@@ -171,6 +181,15 @@ async function resetDomainStats(domain) {
     const nextStats = { ...statsToday };
     delete nextStats[domain];
     await chrome.storage.local.set({ statsToday: nextStats });
+    
+    // redirect the active tab to the domain if it's currently blocked on it
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (activeTab?.id != null) {
+        const isBlockedPage = activeTab.url?.includes("blocked.html") && activeTab.url?.includes(encodeURIComponent(domain));
+        if (isBlockedPage) {
+            await chrome.tabs.update(activeTab.id, { url: `https://${domain}` });
+        }
+    }
 }
 
 async function addDomain(domain, limitSeconds) {
