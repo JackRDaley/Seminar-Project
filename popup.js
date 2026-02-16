@@ -127,7 +127,8 @@ function renderBlockList(blockedDomains, statsToday) {
         const st = statsToday?.[domain] || { timeMs: 0, visits: 0 };
         const timeSec = Math.round((st.timeMs || 0) / 1000);
 
-        const limitMin = cfg?.limitMinutes ?? "—";
+        const limitSec = cfg?.limitSeconds ?? null;
+        const limitText = limitSec == null ? "—" : formatTime(limitSec);
 
         const div = document.createElement("div");
         div.className = "item";
@@ -165,10 +166,17 @@ async function removeDomain(domain) {
     });
 }
 
-async function addDomain(domain, limitMinutes) {
+async function resetDomainStats(domain) {
+    const { statsToday = {} } = await chrome.storage.local.get(["statsToday"]);
+    const nextStats = { ...statsToday };
+    delete nextStats[domain];
+    await chrome.storage.local.set({ statsToday: nextStats });
+}
+
+async function addDomain(domain, limitSeconds) {
     const { blockedDomains = {} } = await chrome.storage.local.get(["blockedDomains"]);
     const next = { ...blockedDomains };
-    next[domain] = { limitMinutes };
+    next[domain] = { limitSeconds };
     await chrome.storage.local.set({ blockedDomains: next });
 }
 
