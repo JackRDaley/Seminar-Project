@@ -1,27 +1,40 @@
 <!doctype html>
-<html>
+<html lang="en">
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <title>Blocked</title>
-        <style>
-            body { font-family: system-ui; padding: 24px; }
-            .card { max-width: 520px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 18px; }
-            h1 { margin: 0 0 8px; }
-            p { margin: 6px 0; color: #444; }
-            .muted { color: #777; font-size: 13px; }
-        </style>
+        <link rel="stylesheet" href="blocked.css" />
     </head>
+
     <body>
-        <div class="card">
+        <div class="bg"></div>
+
+        <main class="wrap">
+        <section class="card">
+            <div class="badge">Time limit reached</div>
+
             <h1>Site blocked</h1>
-            <p>You’ve hit your time limit for <strong id="domain">this site</strong>.</p>
-            <p class="muted">Come back tomorrow.</p>
-        </div>
+
+            <p class="lead">
+            You’ve hit your limit for
+            <span id="domain" class="domain">this site</span>
+            </p>
+
+            <div class="actions">
+            <button id="goBackBtn" class="btn ghost" type="button">Go back</button>
+            <button id="closeTabBtn" class="btn" type="button">Close tab</button>
+            </div>
+        </section>
+        </main>
 
         <script>
             const params = new URLSearchParams(location.search);
-            document.getElementById("domain").textContent = params.get("d") || "this site";
+            const d = params.get("d") || "this site";
+            document.getElementById("domain").textContent = d;
+
+            document.getElementById("goBackBtn").addEventListener("click", () => history.back());
+            document.getElementById("closeTabBtn").addEventListener("click", () => window.close());
         </script>
-    </body>
+  </body>
 </html>
