@@ -22,35 +22,12 @@
             </p>
 
             <div class="actions">
-            <button id="goBackBtn" class="btn ghost" type="button">Go back</button>
+            <button id="goBackBtn" class="btn ghost" type="button">Reset limit</button>
             <button id="closeTabBtn" class="btn" type="button">Close tab</button>
             </div>
         </section>
         </main>
 
-        <script>
-            const params = new URLSearchParams(location.search);
-            const d = params.get("d") || "this site";
-            document.getElementById("domain").textContent = d;
-
-            async function goSomewhereSafe() {
-                // If back doesn't work, send them to a safe page.
-                await chrome.tabs.update({ url: "chrome://newtab" });
-            }
-
-            document.getElementById("goBackBtn").addEventListener("click", async () => {
-                // Try back first; if it doesn't change the page quickly, fallback.
-                const before = location.href;
-                history.back();
-                setTimeout(() => {
-                    if (location.href === before) goSomewhereSafe();
-                }, 200);
-            });
-
-            document.getElementById("closeTabBtn").addEventListener("click", async () => {
-                const tab = await chrome.tabs.getCurrent();
-                if (tab?.id != null) chrome.tabs.remove(tab.id);
-            });
-        </script>
+        <script src="blocked.js"></script>
   </body>
 </html>
