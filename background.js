@@ -5,7 +5,8 @@
 const KEYS = {
     blockedDomains: "blockedDomains", // { [domain]: { limitMinutes } }
     statsToday: "statsToday",         // { [domain]: { timeSec, visits, lastSeenDay } }
-    dayKey: "statsDayKey"             // "YYYY-MM-DD"
+    dayKey: "statsDayKey",            // "YYYY-MM-DD"
+    enforceIntervalSec: "enforceIntervalSec" // optional: number of seconds between enforce checks
 };
 
 let activeTabId = null;
@@ -53,16 +54,17 @@ async function addTime(domain, deltaMs) {
     // ENFORCE LIMIT (only if domain is currently blocked)
     if (isBlockedDomain(domain, blockedDomains)) {
         const limitMs = limitMsFor(domain, blockedDomains);
-        if (limitMs != null && cur.timeMs >= limitMs) {
-        // kick the user off the site (active tab only)
-        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-        if (tab?.id != null) {
-            await chrome.tabs.update(tab.id, { url: blockedUrl(domain) }).catch(() => {});
-        }
+        if (limitMs != null && cur.timeMs >= limitMs && activeTabId != null) {
+            const t = await chrome.tabs.get(activeTabId).catch(() => null);
+            const tabDomain = t?.url ? domainFromUrl(t.url) : null;
+
+            // only redirect if the active tracked tab is STILL on this domain
+            if (t?.id != null && tabDomain === domain) {
+                await chrome.tabs.update(t.id, { url: blockedUrl(domain) }).catch(() => {});
+            }
         }
     }
 }
-
 
 async function addVisit(domain) {
     if (!domain) return;
@@ -81,35 +83,46 @@ function isBlockedDomain(domain, blockedDomains) {
 }
 
 function limitMsFor(domain, blockedDomains) {
-    const min = blockedDomains?.[domain]?.limitMinutes;
-    if (!Number.isFinite(min) || min <= 0) return null;
-    return min * 60 * 1000;
+    const sec = blockedDomains?.[domain]?.limitSeconds;
+    if (!Number.isFinite(sec) || sec <= 0) return null;
+    return sec * 1000;
 }
 
 function blockedUrl(domain) {
     return chrome.runtime.getURL(`blocked.html?d=${encodeURIComponent(domain)}`);
 }
 
-async function enforceIfNeeded(domain) {
-    if (!domain || activeTabId == null) return;
+async function enforceIfNeeded(tabId) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.url) return;
+    if (tab.url.startsWith(chrome.runtime.getURL("blocked.html"))) return;
 
-    const { blockedDomains = {}, [KEYS.statsToday]: stats = {} } =
-        await chrome.storage.local.get([KEYS.blockedDomains, KEYS.statsToday]);
+    const domain = domainFromUrl(tab.url);
+    if (!domain) return;
+
+    const { blockedDomains = {}, statsToday = {} } =
+        await chrome.storage.local.get(["blockedDomains", "statsToday"]);
 
     const limitMs = limitMsFor(domain, blockedDomains);
     if (limitMs == null) return;
 
-    const usedMs = stats?.[domain]?.timeMs || 0;
+    const usedMs = statsToday?.[domain]?.timeMs || 0;
     if (usedMs >= limitMs) {
-        await chrome.tabs.update(activeTabId, { url: blockedUrl(domain) }).catch(() => {});
+        await chrome.tabs.update(tabId, { url: blockedUrl(domain) }).catch(() => {});
     }
 }
+
 
 async function flushTime() {
     if (!activeDomain || !activeStartMs) return;
     const deltaMs = Date.now() - activeStartMs;
     activeStartMs = Date.now(); // reset start for continued tracking
     if (deltaMs > 0) await addTime(activeDomain, deltaMs);
+    
+    // immediately check if we should enforce on the active tab
+    if (activeTabId != null) {
+        await enforceIfNeeded(activeTabId);
+    }
 }
 
 async function setActiveDomain(tabId, countVisit = false) {
@@ -131,29 +144,51 @@ async function initActive() {
 }
 chrome.runtime.onStartup?.addListener(() => {
     initActive();
-    chrome.alarms.create("enforce", { periodInMinutes: 1 })
+    createEnforceAlarm();
 })
 
 chrome.runtime.onInstalled.addListener(() => {
     initActive();
-    chrome.alarms.create("enforce", { periodInMinutes: 1 });
+    createEnforceAlarm();
 });
 
+async function createEnforceAlarm() {
+    const { [KEYS.enforceIntervalSec]: stored = 5 } = await chrome.storage.local.get([KEYS.enforceIntervalSec]);
+    let sec = Number(stored);
+    if (!Number.isFinite(sec) || sec <= 0) sec = 5;
+    const whenMs = Date.now() + sec * 1000;
+    // create a one-shot alarm; onAlarm will reschedule the next one
+    chrome.alarms.create("enforce", { when: whenMs });
+}
+
 // When user switches tabs
-chrome.tabs.onActivated.addListener(async ({ tabId }) => { await setActiveDomain(tabId, true) });
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    await setActiveDomain(tabId, true)
+    await enforceIfNeeded(tabId); // Check new tab for enforcement
+});
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name !== "enforce") return;
 
-    await flushTime();                   // writes timeMs
-    await enforceIfNeeded(activeDomain); // redirects if over limit
+    await flushTime(); // writes timeMs
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }); // Get the active tab, not the last tab
+    if (activeTab?.id != null) await enforceIfNeeded(activeTab.id);
+    // schedule next enforcement
+    await createEnforceAlarm();
 });
 
 // When the active tab’s URL changes (navigation)
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     if (!changeInfo.url) return;
 
-    const d = domainFromUrl(changeInfo.url);
+    // If we navigated to blocked.html, stop tracking immediately
+    if (changeInfo.url.startsWith(chrome.runtime.getURL("blocked.html"))) {
+        activeDomain = null;
+        activeStartMs = null;
+        return;
+    }
+
+    /* const d = domainFromUrl(changeInfo.url);
     if (!d) return;
 
     const { blockedDomains = {}, [KEYS.statsToday]: stats = {} } =
@@ -164,15 +199,18 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         const usedMs = stats?.[d]?.timeMs || 0;
 
         if (limitMs != null && usedMs >= limitMs) {
-            // already out of time → keep them blocked
+            // already out of time -> keep them blocked
             await chrome.tabs.update(tabId, { url: blockedUrl(d) }).catch(() => {});
             return;
         }
-    }
+    } */
 
     // existing behavior: if this is the active tab, update active domain tracking
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab?.id === tabId) await setActiveDomain(tabId);
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (activeTab?.id === tabId) {
+        await setActiveDomain(tabId, true);
+        await enforceIfNeeded(tabId)
+    }
 });
 
 // When window focus changes (pause timing if Chrome not focused)
@@ -188,4 +226,11 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
     if (tab?.id != null) await setActiveDomain(tab.id, false);
 });
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (tabId === activeTabId) {
+        activeTabId = null;
+        activeDomain = null;
+        activeStartMs = null;
+    }
+});
 
