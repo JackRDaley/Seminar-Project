@@ -40,9 +40,9 @@ body {
 }
 
 .wrap {
-    padding: 12px;
+    padding: 10px;
     display: grid;
-    gap: 10px;
+    gap: 8px;
     max-height: 520px;
     overflow: auto;
 }
@@ -57,8 +57,8 @@ body {
 .card {
     background: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.05));
     border: 1px solid rgba(255,255,255,.14);
-    border-radius: 16px;
-    padding: 10px;
+    border-radius: 12px;
+    padding: 8px;
     box-shadow: var(--shadow);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
@@ -68,8 +68,8 @@ body {
     display:flex;
     align-items:center;
     justify-content:space-between;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 8px;
+    margin-bottom: 8px;
 }
 
 .card-title {
@@ -106,7 +106,7 @@ body {
 
 .list {
     display: grid;
-    gap: 8px;
+    gap: 6px;
 }
 
 .muted {
@@ -117,10 +117,10 @@ body {
 .item {
     display:grid;
     grid-template-columns: 1fr auto;
-    gap: 10px;
+    gap: 8px;
     align-items:center;
-    padding: 10px 10px;
-    border-radius: 14px;
+    padding: 8px;
+    border-radius: 10px;
     border: 1px solid rgba(255,255,255,.12);
     background: rgba(10,14,28,.35);
     backdrop-filter: blur(10px);
@@ -168,6 +168,27 @@ body {
 }
 .btn:hover {
     filter: brightness(1.08);
+}
+
+.btn-compact {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.16);
+    background: linear-gradient(135deg, rgba(124,92,255,.55), rgba(24,210,255,.35));
+    color: var(--text);
+    font-weight: 700;
+    font-size: 11px;
+    cursor: pointer;
+    box-shadow: none;
+}
+.btn-compact:hover {
+    filter: brightness(1.08);
+}
+
+.btn-compact.danger {
+    background: rgba(255,77,109,.18);
+    border-color: rgba(255,77,109,.35);
+    color: rgba(255,207,214,.95);
 }
 
 .btn.danger {

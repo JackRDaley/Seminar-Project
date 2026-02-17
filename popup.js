@@ -170,13 +170,13 @@ function renderBlockList(blockedDomains, statsToday) {
         const div = document.createElement("div");
         div.className = "item";
         div.innerHTML = `
-            <div>
+            <div style="flex: 1; min-width: 0;">
             <strong>${domain}</strong>
             <div class="meta">Limit: ${limitText} • Today: ${formatTime(timeSec)} • ${st.visits || 0} visits</div>
             </div>
-            <div style="display: flex; gap: 8px;">
-            <button class="btn" data-domain="${domain}" data-action="reset">Reset today</button>
-            <button class="btn danger" data-domain="${domain}" data-action="remove">Remove</button>
+            <div style="display: flex; gap: 4px; flex-shrink: 0;">
+            <button class="btn-compact" data-domain="${domain}" data-action="reset">Reset</button>
+            <button class="btn-compact danger" data-domain="${domain}" data-action="remove">Remove</button>
             </div>
         `;
         div.querySelectorAll("button").forEach((btn) => {
