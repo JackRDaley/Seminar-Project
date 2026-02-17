@@ -23,8 +23,8 @@ async function loadAll() {
         await chrome.storage.local.get(["blockedDomains", "statsToday", "activeBlocks"]);
 
     renderActive(activeBlocks);
-    renderRanking(blockedDomains, statsToday);
-    renderRankingByVisits(blockedDomains, statsToday);
+    renderRanking(blockedDomains, statsToday, "ranking", "timeSec");
+    renderRanking(blockedDomains, statsToday, "rankingByVisits", "visits");
     renderBlockList(blockedDomains, statsToday);
 }
 
@@ -73,8 +73,9 @@ async function stopActiveBlock(domain) {
     await chrome.storage.local.set({ activeBlocks: next });
 }
 
-function renderRanking(blockedDomains, statsToday) {
-    const rank = $("ranking");
+function renderRanking(blockedDomains, statsToday, elementId, sortBy) {
+    const rank = $(elementId);
+    const byVisits = sortBy === "visits";
 
     const blocked = Object.keys(blockedDomains || {});
     if (blocked.length === 0) {
@@ -87,59 +88,24 @@ function renderRanking(blockedDomains, statsToday) {
         .map((domain) => {
             const st = statsToday?.[domain] || { timeMs: 0, visits: 0 };
             const timeSec = Math.round((st.timeMs || 0) / 1000);
-
             return { domain, timeSec, visits: st.visits || 0 };
         })
-        .sort((a, b) => b.timeSec - a.timeSec);
+        .sort((a, b) => byVisits ? b.visits - a.visits : b.timeSec - a.timeSec);
 
     rank.classList.remove("muted");
     rank.innerHTML = "";
 
     rows.forEach((r, i) => {
+        const pill = byVisits ? r.visits : formatTime(r.timeSec);
+        const meta = byVisits ? `${r.visits} visits • ${formatTime(r.timeSec)}` : `${formatTime(r.timeSec)} • ${r.visits} visits`;
         const div = document.createElement("div");
         div.className = "item";
         div.innerHTML = `
         <div>
             <strong>${i + 1}. ${r.domain}</strong>
-            <div class="meta">${formatTime(r.timeSec)} • ${r.visits} visits</div>
+            <div class="meta">${meta}</div>
         </div>
-        <div class="pill">${formatTime(r.timeSec)}</div>
-        `;
-        rank.appendChild(div);
-    });
-}
-
-function renderRankingByVisits(blockedDomains, statsToday) {
-    const rank = $("rankingByVisits");
-
-    const blocked = Object.keys(blockedDomains || {});
-    if (blocked.length === 0) {
-        rank.classList.add("muted");
-        rank.textContent = "Add sites to your block list to see rankings.";
-        return;
-    }
-
-    const rows = blocked
-        .map((domain) => {
-            const st = statsToday?.[domain] || { timeMs: 0, visits: 0 };
-            const timeSec = Math.round((st.timeMs || 0) / 1000);
-
-            return { domain, timeSec, visits: st.visits || 0 };
-        })
-        .sort((a, b) => b.visits - a.visits);
-
-    rank.classList.remove("muted");
-    rank.innerHTML = "";
-
-    rows.forEach((r, i) => {
-        const div = document.createElement("div");
-        div.className = "item";
-        div.innerHTML = `
-        <div>
-            <strong>${i + 1}. ${r.domain}</strong>
-            <div class="meta">${r.visits} visits • ${formatTime(r.timeSec)}</div>
-        </div>
-        <div class="pill">${r.visits}</div>
+        <div class="pill">${pill}</div>
         `;
         rank.appendChild(div);
     });
