@@ -24,6 +24,7 @@ async function loadAll() {
 
     renderActive(activeBlocks);
     renderRanking(blockedDomains, statsToday);
+    renderRankingByVisits(blockedDomains, statsToday);
     renderBlockList(blockedDomains, statsToday);
 }
 
@@ -103,6 +104,42 @@ function renderRanking(blockedDomains, statsToday) {
             <div class="meta">${formatTime(r.timeSec)} • ${r.visits} visits</div>
         </div>
         <div class="pill">${formatTime(r.timeSec)}</div>
+        `;
+        rank.appendChild(div);
+    });
+}
+
+function renderRankingByVisits(blockedDomains, statsToday) {
+    const rank = $("rankingByVisits");
+
+    const blocked = Object.keys(blockedDomains || {});
+    if (blocked.length === 0) {
+        rank.classList.add("muted");
+        rank.textContent = "Add sites to your block list to see rankings.";
+        return;
+    }
+
+    const rows = blocked
+        .map((domain) => {
+            const st = statsToday?.[domain] || { timeMs: 0, visits: 0 };
+            const timeSec = Math.round((st.timeMs || 0) / 1000);
+
+            return { domain, timeSec, visits: st.visits || 0 };
+        })
+        .sort((a, b) => b.visits - a.visits);
+
+    rank.classList.remove("muted");
+    rank.innerHTML = "";
+
+    rows.forEach((r, i) => {
+        const div = document.createElement("div");
+        div.className = "item";
+        div.innerHTML = `
+        <div>
+            <strong>${i + 1}. ${r.domain}</strong>
+            <div class="meta">${r.visits} visits • ${formatTime(r.timeSec)}</div>
+        </div>
+        <div class="pill">${r.visits}</div>
         `;
         rank.appendChild(div);
     });
