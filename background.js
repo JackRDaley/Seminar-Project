@@ -188,23 +188,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
         return;
     }
 
-    /* const d = domainFromUrl(changeInfo.url);
-    if (!d) return;
-
-    const { blockedDomains = {}, [KEYS.statsToday]: stats = {} } =
-        await chrome.storage.local.get([KEYS.blockedDomains, KEYS.statsToday]);
-
-    if (isBlockedDomain(d, blockedDomains)) {
-        const limitMs = limitMsFor(d, blockedDomains);
-        const usedMs = stats?.[d]?.timeMs || 0;
-
-        if (limitMs != null && usedMs >= limitMs) {
-            // already out of time -> keep them blocked
-            await chrome.tabs.update(tabId, { url: blockedUrl(d) }).catch(() => {});
-            return;
-        }
-    } */
-
     // existing behavior: if this is the active tab, update active domain tracking
     const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (activeTab?.id === tabId) {
