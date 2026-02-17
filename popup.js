@@ -202,7 +202,7 @@ async function removeDomain(domain) {
     delete nextBlocked[domain];
 
     const nextStats = { ...statsToday };
-    delete nextStats[domain];;
+    delete nextStats[domain];
 
     const nextActive = (activeBlocks || []).filter((s) => s.domain !== domain);
 

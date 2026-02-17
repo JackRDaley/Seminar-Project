@@ -198,17 +198,6 @@ body {
     box-shadow: none;
 }
 
-.footer {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding: 2px 2px 10px;
-}
-
-.status {
-    color: rgba(234,240,255,.70);
-    font-size: 12px;
-}
 
 .fineprint {
     color: rgba(234,240,255,.40);
