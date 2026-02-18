@@ -6,7 +6,8 @@ const KEYS = {
     blockedDomains: "blockedDomains", // { [domain]: { limitMinutes } }
     statsToday: "statsToday",         // { [domain]: { timeSec, visits, lastSeenDay } }
     dayKey: "statsDayKey",            // "YYYY-MM-DD"
-    enforceIntervalSec: "enforceIntervalSec" // optional: number of seconds between enforce checks
+    enforceIntervalSec: "enforceIntervalSec", // optional: number of seconds between enforce checks
+    alertsSent: "alertsSent"           // { [domain]: Set of alert thresholds already notified ("75", "90") }
 };
 
 let activeTabId = null;
@@ -90,6 +91,57 @@ function limitMsFor(domain, blockedDomains) {
 
 function blockedUrl(domain) {
     return chrome.runtime.getURL(`blocked.html?d=${encodeURIComponent(domain)}`);
+}
+
+async function checkAndSendAlerts(domain, blockedDomains, statsToday) {
+    if (!isBlockedDomain(domain, blockedDomains)) return;
+
+    const limitMs = limitMsFor(domain, blockedDomains);
+    const usedMs = statsToday?.[domain]?.timeMs || 0;
+
+    if (limitMs == null || usedMs < limitMs * 0.75) return; // Only alert if at 75%+
+
+    const { [KEYS.alertsSent]: alertsSent = {} } = await chrome.storage.local.get([KEYS.alertsSent]);
+    let sent = alertsSent[domain] || {};
+
+    const pct75 = usedMs >= limitMs * 0.75;
+    const pct90 = usedMs >= limitMs * 0.9;
+
+    const remainingMs = Math.max(0, limitMs - usedMs);
+    const remainingSec = Math.round(remainingMs / 1000);
+
+    if (pct90 && !sent["90"]) {
+        chrome.notifications.create({
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("icon.png"),
+            title: `90% of limit used: ${domain}`,
+            message: `You have ~${formatTimeSec(remainingSec)} left today.`,
+            priority: 2
+        });
+        sent["90"] = true;
+    } else if (pct75 && !sent["75"]) {
+        chrome.notifications.create({
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("icon.png"),
+            title: `75% of limit used: ${domain}`,
+            message: `You have ~${formatTimeSec(remainingSec)} left today.`,
+            priority: 1
+        });
+        sent["75"] = true;
+    }
+
+    alertsSent[domain] = sent;
+    await chrome.storage.local.set({ [KEYS.alertsSent]: alertsSent });
+}
+
+function formatTimeSec(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
 }
 
 async function enforceIfNeeded(tabId) {
