@@ -162,8 +162,8 @@ function renderBlockList(blockedDomains, statsToday) {
 }
 
 async function removeDomain(domain) {
-    const { blockedDomains = {}, statsToday = {}, activeBlocks = [] }
-        = await chrome.storage.local.get(["blockedDomains", "statsToday", "activeBlocks"]);
+    const { blockedDomains = {}, statsToday = {}, activeBlocks = [], alertsSent = {} }
+        = await chrome.storage.local.get(["blockedDomains", "statsToday", "activeBlocks", "alertsSent"]);
     const nextBlocked = { ...blockedDomains };
     delete nextBlocked[domain];
 
@@ -172,18 +172,26 @@ async function removeDomain(domain) {
 
     const nextActive = (activeBlocks || []).filter((s) => s.domain !== domain);
 
+    const nextAlerts = { ...alertsSent };
+    delete nextAlerts[domain];
+
     await chrome.storage.local.set({
         blockedDomains: nextBlocked,
         statsToday: nextStats,
-        activeBlocks: nextActive
+        activeBlocks: nextActive,
+        alertsSent: nextAlerts
     });
 }
 
 async function resetDomainStats(domain) {
-    const { statsToday = {} } = await chrome.storage.local.get(["statsToday"]);
+    const { statsToday = {}, alertsSent = {} } = await chrome.storage.local.get(["statsToday", "alertsSent"]);
     const nextStats = { ...statsToday };
     delete nextStats[domain];
-    await chrome.storage.local.set({ statsToday: nextStats });
+    
+    const nextAlerts = { ...alertsSent };
+    delete nextAlerts[domain];
+    
+    await chrome.storage.local.set({ statsToday: nextStats, alertsSent: nextAlerts });
     
     // redirect the active tab to the domain if it's currently blocked on it
     const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -196,10 +204,15 @@ async function resetDomainStats(domain) {
 }
 
 async function addDomain(domain, limitSeconds) {
-    const { blockedDomains = {} } = await chrome.storage.local.get(["blockedDomains"]);
+    const { blockedDomains = {}, alertsSent = {} } = await chrome.storage.local.get(["blockedDomains", "alertsSent"]);
     const next = { ...blockedDomains };
     next[domain] = { limitSeconds };
-    await chrome.storage.local.set({ blockedDomains: next });
+    
+    // Reset alerts when limit is changed
+    const nextAlerts = { ...alertsSent };
+    delete nextAlerts[domain];
+    
+    await chrome.storage.local.set({ blockedDomains: next, alertsSent: nextAlerts });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

@@ -52,6 +52,9 @@ async function addTime(domain, deltaMs) {
 
     await chrome.storage.local.set({ [KEYS.statsToday]: stats });
 
+    // Check for alerts after updating time
+    await checkAndSendAlerts(domain, blockedDomains, stats);
+
     // ENFORCE LIMIT (only if domain is currently blocked)
     if (isBlockedDomain(domain, blockedDomains)) {
         const limitMs = limitMsFor(domain, blockedDomains);
@@ -205,9 +208,9 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 async function createEnforceAlarm() {
-    const { [KEYS.enforceIntervalSec]: stored = 5 } = await chrome.storage.local.get([KEYS.enforceIntervalSec]);
+    const { [KEYS.enforceIntervalSec]: stored = 2 } = await chrome.storage.local.get([KEYS.enforceIntervalSec]);
     let sec = Number(stored);
-    if (!Number.isFinite(sec) || sec <= 0) sec = 5;
+    if (!Number.isFinite(sec) || sec <= 0) sec = 2;
     const whenMs = Date.now() + sec * 1000;
     // create a one-shot alarm; onAlarm will reschedule the next one
     chrome.alarms.create("enforce", { when: whenMs });
