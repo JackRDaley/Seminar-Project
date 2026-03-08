@@ -221,7 +221,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("addForm").addEventListener("submit", async (e) => {
         e.preventDefault();
         const domain = normalizeDomain($("domainInput").value);
-        const limit = Number($("limitInput").value);
+        const limit = Number($("limitInput").value) * 60; // convert minutes to seconds
 
         if (!domain) return;
         if (!Number.isFinite(limit) || limit <= 0) return;

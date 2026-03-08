@@ -3,6 +3,12 @@
     "name": "Screen Time Manager",
     "version": "0.1.0",
     "description": "Set per-site time limits and track daily visits + active time.",
+    "icons": {
+        "16": "extension_icon.png",
+        "32": "extension_icon.png",
+        "48": "extension_icon.png",
+        "128": "extension_icon.png"
+    },
     "action": {
         "default_title": "Screen Time Manager",
         "default_popup": "popup.html"
