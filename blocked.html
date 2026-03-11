@@ -12,18 +12,25 @@
 
         <main class="wrap">
         <section class="card">
-            <div class="badge">Time limit reached</div>
+            <div class="badge" id="badge">Time limit reached</div>
 
             <h1>Site blocked</h1>
 
             <p class="lead">
-            You've hit your limit for
+            You've reached your limit for
             <span id="domain" class="domain">this site</span>
             </p>
 
-            <div class="actions">
-            <button id="goBackBtn" class="btn ghost" type="button">Reset limit</button>
-            <button id="closeTabBtn" class="btn" type="button">Close tab</button>
+            <p class="blocked-until" id="blockedUntil"></p>
+
+            <div class="actions" id="limitActions">
+                <button id="goBackBtn" class="btn ghost" type="button">Reset limit</button>
+                <button id="closeTabBtn" class="btn" type="button">Close tab</button>
+            </div>
+
+            <div class="actions" id="scheduledActions">
+                <button id="snoozeBtn" class="btn snooze" type="button">Snooze 5 min</button>
+                <button id="endSessionBtn" class="btn ghost" type="button">End session</button>
             </div>
         </section>
         </main>

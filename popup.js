@@ -53,7 +53,7 @@ async function loadAll() {
         await chrome.storage.local.get(["blockedDomains", "statsToday", "allStatsToday", "activeBlocks", "scheduledBlocks"]);
 
     renderActive(activeBlocks);
-    renderScheduled(scheduledBlocks);
+    renderScheduled(scheduledBlocks, activeBlocks);
     renderRanking(blockedDomains, allStatsToday, "ranking", "timeSec", "Top websites by time");
     renderRanking(blockedDomains, allStatsToday, "rankingByVisits", "visits", "Top websites by visits");
     renderBlockList(blockedDomains, statsToday);
@@ -106,11 +106,12 @@ async function stopActiveBlock(domain) {
     await chrome.storage.local.set({ activeBlocks: next });
 }
 
-function renderScheduled(scheduledBlocks) {
+function renderScheduled(scheduledBlocks, activeBlocks = []) {
     const list = $("scheduledList");
     const count = $("scheduledCount");
 
     const scheduled = Array.isArray(scheduledBlocks) ? scheduledBlocks : [];
+    const active = Array.isArray(activeBlocks) ? activeBlocks : [];
     count.textContent = String(scheduled.length);
 
     if (scheduled.length === 0) {
@@ -123,6 +124,7 @@ function renderScheduled(scheduledBlocks) {
     list.innerHTML = "";
 
     scheduled.forEach((s) => {
+        const isActive = active.some((b) => b.domain === s.domain);
         const div = document.createElement("div");
         div.className = "item";
         div.innerHTML = `
@@ -130,16 +132,18 @@ function renderScheduled(scheduledBlocks) {
             <strong>${s.domain}</strong>
             <div class="meta">Daily: ${formatTimeForDisplay(s.startTime)} - ${formatTimeForDisplay(s.endTime)}</div>
         </div>
-        <button class="btn danger" data-domain="${s.domain}">Cancel</button>
+        <button class="btn danger" data-domain="${s.domain}" ${isActive ? "disabled title=\"Stop the active session before removing\"" : ""}>Cancel</button>
         `;
-        div.querySelector("button").addEventListener("click", async (e) => {
-            const { scheduledBlocks = [] } = await chrome.storage.local.get(["scheduledBlocks"]);
-            const next = scheduledBlocks.filter((b) => b.id !== s.id);
-            await chrome.storage.local.set({ scheduledBlocks: next });
-            chrome.alarms.clear(`startBlock_${s.id}`);
-            chrome.alarms.clear(`endBlock_${s.id}`);
-            await loadAll();
-        });
+        if (!isActive) {
+            div.querySelector("button").addEventListener("click", async (e) => {
+                const { scheduledBlocks = [] } = await chrome.storage.local.get(["scheduledBlocks"]);
+                const next = scheduledBlocks.filter((b) => b.id !== s.id);
+                await chrome.storage.local.set({ scheduledBlocks: next });
+                chrome.alarms.clear(`startBlock_${s.id}`);
+                chrome.alarms.clear(`endBlock_${s.id}`);
+                await loadAll();
+            });
+        }
         list.appendChild(div);
     });
 }

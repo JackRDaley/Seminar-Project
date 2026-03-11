@@ -116,6 +116,21 @@ h1 {
     box-shadow: none;
 }
 
+.btn.snooze {
+    background: linear-gradient(135deg, rgba(255,180,0,.50), rgba(255,120,0,.40));
+    border-color: rgba(255,180,0,.35);
+    color: rgba(255,240,200,.96);
+    box-shadow: 0 8px 24px rgba(255,150,0,.20);
+}
+.btn.snooze:hover { filter: brightness(1.10); }
+
+.blocked-until {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: rgba(234,240,255,.55);
+    min-height: 1.2em;
+}
+
 .fine {
     margin: 12px 0 0;
     font-size: 12px;
