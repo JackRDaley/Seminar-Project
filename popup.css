@@ -231,6 +231,11 @@ body {
 .btn:hover {
     filter: brightness(1.08);
 }
+.btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    filter: none;
+}
 
 .btn-compact {
     padding: 6px 9px;

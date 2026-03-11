@@ -10,7 +10,8 @@ const KEYS = {
     enforceIntervalSec: "enforceIntervalSec", // optional: number of seconds between enforce checks
     alertsSent: "alertsSent",          // { [domain]: Set of alert thresholds already notified ("75", "90") }
     scheduledBlocks: "scheduledBlocks", // [{ domain: string, startTime: number, endTime: number }]
-    activeBlocks: "activeBlocks"       // [{ domain: string, startTime: number, endTime: number }]
+    activeBlocks: "activeBlocks",       // [{ domain: string, startTime: number, endTime: number }]
+    snoozedDomains: "snoozedDomains"    // { [domain]: expiresAt (ms) }
 };
 
 let activeTabId = null;
@@ -104,8 +105,8 @@ function limitMsFor(domain, blockedDomains) {
     return sec * 1000;
 }
 
-function blockedUrl(domain) {
-    return chrome.runtime.getURL(`blocked.html?d=${encodeURIComponent(domain)}`);
+function blockedUrl(domain, source = "limit") {
+    return chrome.runtime.getURL(`blocked.html?d=${encodeURIComponent(domain)}&source=${source}`);
 }
 
 async function redirectOpenTabsForDomains(domains) {
@@ -120,7 +121,7 @@ async function redirectOpenTabsForDomains(domains) {
         const domain = domainFromUrl(tab.url);
         if (!domainSet.has(domain)) return;
 
-        await chrome.tabs.update(tab.id, { url: blockedUrl(domain) }).catch(() => {});
+        await chrome.tabs.update(tab.id, { url: blockedUrl(domain, "scheduled") }).catch(() => {});
     }));
 }
 
@@ -367,7 +368,7 @@ function buildRulesFromActiveBlocks(activeBlocks) {
         action: {
             type: "redirect",
             redirect: {
-                extensionPath: `/blocked.html?d=${encodeURIComponent(domain)}`
+                extensionPath: `/blocked.html?d=${encodeURIComponent(domain)}&source=scheduled`
             }
         },
         condition: {
@@ -378,8 +379,14 @@ function buildRulesFromActiveBlocks(activeBlocks) {
 }
 
 async function syncBlockRulesNow() {
-    const { activeBlocks = [] } = await chrome.storage.local.get([KEYS.activeBlocks]);
-    const rules = buildRulesFromActiveBlocks(activeBlocks);
+    const { activeBlocks = [], [KEYS.snoozedDomains]: snoozedDomains = {} } =
+        await chrome.storage.local.get([KEYS.activeBlocks, KEYS.snoozedDomains]);
+    const now = Date.now();
+    const unsnoozedBlocks = activeBlocks.filter((b) => {
+        const expiry = snoozedDomains[b.domain];
+        return !expiry || expiry <= now;
+    });
+    const rules = buildRulesFromActiveBlocks(unsnoozedBlocks);
     const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
     const existingRuleIds = existingRules.map((rule) => rule.id);
 
@@ -496,6 +503,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } else if (alarm.name.startsWith('endBlock_')) {
         const id = parseInt(alarm.name.split('_')[1], 10);
         await deactivateScheduledBlock(id);
+    } else if (alarm.name.startsWith('snoozeEnd_')) {
+        const domain = alarm.name.slice('snoozeEnd_'.length);
+        const { [KEYS.snoozedDomains]: snoozedDomains = {} } =
+            await chrome.storage.local.get([KEYS.snoozedDomains]);
+        delete snoozedDomains[domain];
+        await chrome.storage.local.set({ [KEYS.snoozedDomains]: snoozedDomains });
+        await updateBlockRules();
     }
 });
 
@@ -600,6 +614,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         (async () => {
             const result = await runSelfTest();
             sendResponse(result);
+        })();
+        return true;
+    }
+
+    if (request.action === "snoozeBlock") {
+        const { domain, minutes = 5 } = request;
+        (async () => {
+            const expiresAt = Date.now() + minutes * 60 * 1000;
+            const { [KEYS.snoozedDomains]: snoozedDomains = {} } =
+                await chrome.storage.local.get([KEYS.snoozedDomains]);
+            snoozedDomains[domain] = expiresAt;
+            await chrome.storage.local.set({ [KEYS.snoozedDomains]: snoozedDomains });
+            await updateBlockRules();
+            chrome.alarms.create(`snoozeEnd_${domain}`, { when: expiresAt });
+            sendResponse({ success: true, expiresAt });
+        })();
+        return true;
+    }
+
+    if (request.action === "endScheduledBlock") {
+        const { domain } = request;
+        (async () => {
+            const { [KEYS.activeBlocks]: activeBlocks = [] } =
+                await chrome.storage.local.get([KEYS.activeBlocks]);
+            const next = activeBlocks.filter((b) => b.domain !== domain);
+            await chrome.storage.local.set({ [KEYS.activeBlocks]: next });
+            await updateBlockRules();
+            sendResponse({ success: true });
         })();
         return true;
     }
