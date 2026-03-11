@@ -14,7 +14,7 @@
         <!-- Active blocking -->
         <section class="card">
             <div class="card-head">
-            <div class="card-title">Active blocking</div>
+            <div class="card-title">Active sessions</div>
             <span class="chip">
                 <span class="dot"></span>
                 <span id="activeCount">0</span>
@@ -27,8 +27,8 @@
         <!-- Ranking by time -->
         <section class="card">
             <div class="card-head">
-            <div class="card-title">Top time spent</div>
-            <div class="hint">Today</div>
+            <div class="card-title">Top websites by time</div>
+            <div class="hint">Recent</div>
             </div>
 
             <div id="ranking" class="list muted">No data yet.</div>
@@ -37,8 +37,8 @@
         <!-- Ranking by visits -->
         <section class="card">
             <div class="card-head">
-            <div class="card-title">Most visits</div>
-            <div class="hint">Today</div>
+            <div class="card-title">Top websites by visits</div>
+            <div class="hint">Recent</div>
             </div>
 
             <div id="rankingByVisits" class="list muted">No data yet.</div>
@@ -71,6 +71,28 @@
             </form>
 
             <div id="blockList" class="list muted">No blocked sites yet.</div>
+        </section>
+
+        <!-- Scheduled blocking -->
+        <section class="card">
+            <div class="card-head">
+                <div class="card-title">Scheduled blocking</div>
+                <span class="chip">
+                    <span class="dot"></span>
+                    <span id="scheduledCount">0</span>
+                </span>
+            </div>
+
+            <form id="scheduledForm" class="scheduled-form">
+                <input type="text" id="scheduledDomain" class="input" placeholder="Domain" required>
+                <div class="time-row">
+                    <input type="text" id="startTime" class="input" placeholder="Start (9:00 AM)" required>
+                    <input type="text" id="endTime" class="input" placeholder="End (5:00 PM)" required>
+                </div>
+                <button class="btn" type="submit">Schedule</button>
+            </form>
+
+            <div id="scheduledList" class="list muted">No scheduled sessions.</div>
         </section>
         </main>
     </body>
