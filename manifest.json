@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Screen Time Manager",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Set per-site time limits and track daily visits + active time.",
     "icons": {
         "16": "extension_icon.png",
@@ -16,6 +16,12 @@
     "background": {
         "service_worker": "background.js"
     },
-    "permissions": ["storage", "tabs", "alarms", "notifications"],
-    "host_permissions": ["<all_urls>"]
+    "permissions": ["storage", "tabs", "alarms", "notifications", "declarativeNetRequest"],
+    "host_permissions": ["<all_urls>"],
+    "web_accessible_resources": [
+        {
+            "resources": ["blocked.html", "blocked.js", "blocked.css", "icon.png"],
+            "matches": ["<all_urls>"]
+        }
+    ]
 }

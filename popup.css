@@ -134,11 +134,73 @@ body {
     color: rgba(234,240,255,.62);
 }
 
+.ranking-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.ranking-main {
+    min-width: 0;
+}
+
+.ranking-actions {
+    display: grid;
+    grid-auto-flow: column;
+    align-items: center;
+    justify-content: end;
+    gap: 6px;
+    min-width: 136px;
+}
+
+.metric-chip {
+    display: inline-grid;
+    grid-auto-flow: column;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(24,210,255,.28);
+    background: linear-gradient(135deg, rgba(24,210,255,.14), rgba(124,92,255,.16));
+}
+
+.metric-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: rgba(234,240,255,.70);
+}
+
+.metric-value {
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(234,240,255,.96);
+}
+
 .add-row {
     display:grid;
     grid-template-columns: 1fr 78px 64px;
     gap: 8px;
     margin-bottom: 10px;
+}
+
+.scheduled-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 80px;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.scheduled-form {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.time-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
 }
 
 .input {
@@ -171,8 +233,8 @@ body {
 }
 
 .btn-compact {
-    padding: 6px 10px;
-    border-radius: 8px;
+    padding: 6px 9px;
+    border-radius: 999px;
     border: 1px solid rgba(255,255,255,.16);
     background: linear-gradient(135deg, rgba(124,92,255,.55), rgba(24,210,255,.35));
     color: var(--text);
@@ -191,11 +253,14 @@ body {
     color: rgba(255,207,214,.95);
 }
 
-.btn.danger {
+.blocked-indicator {
+    font-size: 10px;
+    color: rgba(255,77,109,.95);
+    font-weight: 700;
+    padding: 4px 7px;
+    border-radius: 999px;
     background: rgba(255,77,109,.18);
-    border-color: rgba(255,77,109,.35);
-    color: rgba(255,207,214,.95);
-    box-shadow: none;
+    border: 1px solid rgba(255,77,109,.35);
 }
 
 
