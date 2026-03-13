@@ -1,100 +1,171 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Screen Time Manager</title>
-        <link rel="stylesheet" href="popup.css" />
-    </head>
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Screen Time Manager</title>
+    <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+<div class="scene">
+    <input type="radio" name="tabs" id="tab1" checked />
+    <input type="radio" name="tabs" id="tab2" />
+    <input type="radio" name="tabs" id="tab3" />
+    <input type="radio" name="tabs" id="tab4" />
 
-    <body>
-        <div class="bg"></div>
-
-        <main class="wrap">
-        <!-- Active blocking -->
-        <section class="card">
-            <div class="card-head">
-            <div class="card-title">Active sessions</div>
-            <span class="chip">
-                <span class="dot"></span>
-                <span id="activeCount">0</span>
-            </span>
+    <header>
+        <div class="logo">
+            <div>
+                <div class="logo-name">Screen Time</div>
+                <div class="logo-sub">Focus &amp; Limits Manager</div>
             </div>
+        </div>
+        <div class="status-pill">
+            <span class="pulse"></span>
+            <span id="activeCount">0</span>&nbsp;active
+        </div>
+    </header>
 
-            <div id="activeList" class="list muted">No active sessions.</div>
-        </section>
+    <nav>
+        <label for="tab1">Dashboard</label>
+        <label for="tab2">Limits</label>
+        <label for="tab3">Schedule</label>
+        <label for="tab4">Settings</label>
+    </nav>
 
-        <!-- Ranking by time -->
-        <section class="card">
-            <div class="card-head">
-            <div class="card-title">Top websites by time</div>
-            <div class="hint">Recent</div>
-            </div>
+    <div class="panels">
 
-            <div id="ranking" class="list muted">No data yet.</div>
-        </section>
-
-        <!-- Ranking by visits -->
-        <section class="card">
-            <div class="card-head">
-            <div class="card-title">Top websites by visits</div>
-            <div class="hint">Recent</div>
-            </div>
-
-            <div id="rankingByVisits" class="list muted">No data yet.</div>
-        </section>
-
-        <!-- Block list -->
-        <section class="card">
-            <div class="card-head">
-            <div class="card-title">Block list</div>
-            </div>
-
-            <form id="addForm" class="add-row">
-            <input
-                id="domainInput"
-                class="input"
-                type="text"
-                placeholder="Website (e.g. google.com)"
-                autocomplete="off"
-            />
-            <input
-                id="limitInput"
-                class="input input-min"
-                type="number"
-                min="1"
-                max="1440"
-                placeholder="mins"
-                title="Daily limit (minutes)"
-            />
-            <button class="btn" type="submit">Add</button>
-            </form>
-
-            <div id="blockList" class="list muted">No blocked sites yet.</div>
-        </section>
-
-        <!-- Scheduled blocking -->
-        <section class="card">
-            <div class="card-head">
-                <div class="card-title">Scheduled blocking</div>
-                <span class="chip">
-                    <span class="dot"></span>
-                    <span id="scheduledCount">0</span>
-                </span>
-            </div>
-
-            <form id="scheduledForm" class="scheduled-form">
-                <input type="text" id="scheduledDomain" class="input" placeholder="Domain" required>
-                <div class="time-row">
-                    <input type="text" id="startTime" class="input" placeholder="Start (9:00 AM)" required>
-                    <input type="text" id="endTime" class="input" placeholder="End (5:00 PM)" required>
+        <!-- ── Dashboard ──────────────────────────────── -->
+        <div class="panel" id="p1">
+            <div class="stat-strip">
+                <div class="stat-box">
+                    <div class="stat-lbl">Screen time</div>
+                    <div class="stat-val" id="statScreenTime">—</div>
                 </div>
-                <button class="btn" type="submit">Schedule</button>
-            </form>
+                <div class="stat-box">
+                    <div class="stat-lbl">Visits</div>
+                    <div class="stat-val" id="statVisits">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-lbl">Blocked</div>
+                    <div class="stat-val" id="statBlocked">—</div>
+                </div>
+                <div class="stat-filter-wrap">
+                    <select class="stat-filter" id="statRange" aria-label="Stats range">
+                        <option selected>Today</option>
+                        <option>Yesterday</option>
+                        <option>This week</option>
+                        <option>This month</option>
+                    </select>
+                    <span class="stat-filter-arrow" aria-hidden="true">&#x02c5;</span>
+                </div>
+            </div>
 
-            <div id="scheduledList" class="list muted">No scheduled sessions.</div>
-        </section>
-        </main>
-    </body>
-    <script src="popup.js"></script>
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Active Sessions</div>
+                </div>
+                <div id="activeList" class="list muted">No active sessions.</div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Top by Time &middot; Today</div>
+                </div>
+                <div id="ranking" class="list muted">No data yet.</div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Top by Visits &middot; Today</div>
+                </div>
+                <div id="rankingByVisits" class="list muted">No data yet.</div>
+            </div>
+        </div>
+
+        <!-- ── Limits ─────────────────────────────────── -->
+        <div class="panel" id="p2">
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Add Limit</div>
+                </div>
+                <div class="card-body">
+                    <form id="addForm">
+                        <div class="input-row">
+                            <input id="domainInput" class="input" type="text" placeholder="Website (e.g. google.com)" autocomplete="off" />
+                            <input id="limitInput" class="input input-min" type="number" min="1" max="1440" placeholder="mins" title="Daily limit (minutes)" />
+                        </div>
+                        <button class="btn" type="submit" style="width:100%">Add</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Block List</div>
+                </div>
+                <div id="blockList" class="list muted">No blocked sites yet.</div>
+            </div>
+        </div>
+
+        <!-- ── Schedule ───────────────────────────────── -->
+        <div class="panel" id="p3">
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">New Scheduled Block</div>
+                </div>
+                <div class="card-body">
+                    <form id="scheduledForm">
+                        <input type="text" id="scheduledDomain" class="input" placeholder="Domain" required style="width:100%;margin-bottom:8px" />
+                        <div class="two-col">
+                            <input type="text" id="startTime" class="input" placeholder="Start (9:00 AM)" required />
+                            <input type="text" id="endTime" class="input" placeholder="End (5:00 PM)" required />
+                        </div>
+                        <button class="btn" type="submit" style="width:100%;margin-top:8px">Schedule</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Scheduled Sessions</div>
+                    <div class="badge"><span class="dot"></span><span id="scheduledCount">0</span></div>
+                </div>
+                <div id="scheduledList" class="list muted">No scheduled sessions.</div>
+            </div>
+        </div>
+
+        <!-- ── Settings ───────────────────────────────── -->
+        <div class="panel" id="p4">
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Preferences</div>
+                </div>
+                <div class="card-body">
+                    <form id="settingsForm">
+                        <div class="settings-list">
+                            <div class="settings-row">
+                                <label class="settings-label" for="defaultLimitMinutes">Default limit (minutes)</label>
+                                <input id="defaultLimitMinutes" class="input input-min settings-number" type="number" min="1" max="1440" />
+                            </div>
+
+                            <div class="settings-row">
+                                <label class="settings-label" for="use24HourTime">Use 24-hour schedule inputs</label>
+                                <input id="use24HourTime" class="settings-toggle" type="checkbox" />
+                            </div>
+                        </div>
+
+                        <div class="settings-actions">
+                            <button class="btn" type="submit" style="width:100%">Save Settings</button>
+                            <div id="settingsSavedMsg" class="settings-saved" role="status" aria-live="polite">Settings saved</div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /panels -->
+</div><!-- /scene -->
+<script src="popup.js"></script>
+</body>
 </html>
