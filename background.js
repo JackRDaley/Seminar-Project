@@ -298,6 +298,11 @@ async function initActive() {
     if (tab?.id != null) await setActiveDomain(tab.id);
 }
 
+async function ensureActiveTrackingState() {
+    if (activeTabId != null && activeDomain && activeStartMs) return;
+    await initActive();
+}
+
 async function createEnforceAlarm() {
     const { [KEYS.enforceIntervalSec]: stored = 2 } = await chrome.storage.local.get([KEYS.enforceIntervalSec]);
     let sec = Number(stored);
@@ -490,6 +495,7 @@ chrome.runtime.onInstalled.addListener(() => {
 // Handle alarms
 chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === "enforce") {
+        await ensureActiveTrackingState();
         await flushTime();
         const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
         if (activeTab?.id != null) await enforceIfNeeded(activeTab.id);
@@ -633,6 +639,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 
+    if (request.action === "flushActiveTimeNow") {
+        (async () => {
+            await ensureActiveTrackingState();
+            await flushTime();
+            if (activeTabId != null) {
+                await enforceIfNeeded(activeTabId);
+            }
+            sendResponse({ success: true });
+        })();
+        return true;
+    }
+
     if (request.action === "endScheduledBlock") {
         const { domain } = request;
         (async () => {
@@ -652,12 +670,3 @@ chrome.storage.onChanged.addListener((changes, area) => {
         updateBlockRules();
     }
 });
-
-async function logAllDynamicRules() {
-    const rules = await chrome.declarativeNetRequest.getDynamicRules();
-    console.log("Current Dynamic Rules:", rules);
-}
-
-// Call logAllDynamicRules to debug and print all current dynamic rules
-logAllDynamicRules();
-
