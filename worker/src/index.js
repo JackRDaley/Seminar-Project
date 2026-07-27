@@ -412,7 +412,7 @@ function workerOriginFromUrl(url) {
 }
 
 function whopCheckoutFallbackUrl(env) {
-    return String(env.WHOP_CHECKOUT_URL || "https://whop.com/saturnfocus/screen-time-manager-pro/").trim();
+    return String(env.WHOP_CHECKOUT_URL || "https://whop.com/joined/saturnfocus/products/screen-time-manager-pro/").trim();
 }
 
 function whopApiBaseUrl(env) {

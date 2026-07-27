@@ -180,6 +180,12 @@
         }, { timeMs: 0, visits: 0 });
     }
 
+    function behaviorTotalsForDay(behaviorHistory = {}, day) {
+        const bucket = behaviorHistory?.[day] || {};
+        const byType = bucket.byType || {};
+        return Object.values(byType).reduce((sum, count) => sum + Math.max(0, Number(count || 0)), 0);
+    }
+
     function insightDataReadiness(input = {}) {
         const now = Number(input.now || Date.now());
         const hourlyUsageHistory = input.hourlyUsageHistory || {};
@@ -196,12 +202,13 @@
                 return totals;
             }, { timeMs: 0, visits: 0 });
             const hourlyTotals = hourlyTotalsForDay(hourlyUsageHistory, day);
+            const behaviorCount = behaviorTotalsForDay(input.behaviorHistory || {}, day);
             const dayMs = Math.max(statsTotals.timeMs, hourlyTotals.timeMs);
             const dayVisits = Math.max(statsTotals.visits, hourlyTotals.visits);
 
-            if (dayMs > 0 || dayVisits > 0) activeDays += 1;
+            if (dayMs > 0 || dayVisits > 0 || behaviorCount > 0) activeDays += 1;
             totalMs += dayMs;
-            visitCount += dayVisits;
+            visitCount += dayVisits + behaviorCount;
         }
 
         const hasEnoughVolume = totalMs >= INSIGHT_MIN_TOTAL_MS || visitCount >= INSIGHT_MIN_VISITS;
@@ -441,6 +448,86 @@
         };
     }
 
+    function behaviorEventsForDay(behaviorHistory = {}, day) {
+        const events = behaviorHistory?.[day]?.events;
+        return Array.isArray(events) ? events : [];
+    }
+
+    function behaviorEventsForDomain(input = {}, domain, now = Date.now(), days = 7) {
+        const normalized = normalizeDomain(domain);
+        if (!isValidDomain(normalized)) return [];
+
+        const result = [];
+        for (let offset = 0; offset < days; offset += 1) {
+            const day = dayKeyOffset(now, offset);
+            behaviorEventsForDay(input.behaviorHistory || {}, day).forEach((event) => {
+                if (normalizeDomain(event.domain) === normalized) result.push(event);
+            });
+        }
+        return result;
+    }
+
+    function behaviorDomains(input = {}, now = Date.now(), days = 7) {
+        const domains = new Set();
+        for (let offset = 0; offset < days; offset += 1) {
+            const day = dayKeyOffset(now, offset);
+            const bucket = input.behaviorHistory?.[day] || {};
+            Object.keys(bucket.byDomain || {}).forEach((domain) => {
+                const normalized = normalizeDomain(domain);
+                if (isValidDomain(normalized)) domains.add(normalized);
+            });
+            behaviorEventsForDay(input.behaviorHistory || {}, day).forEach((event) => {
+                const normalized = normalizeDomain(event.domain);
+                if (isValidDomain(normalized)) domains.add(normalized);
+            });
+        }
+        return domains;
+    }
+
+    function countBehaviorEvents(events = [], types = []) {
+        const allowed = new Set(types);
+        return events.filter((event) => allowed.has(event.type)).length;
+    }
+
+    function sortedBehaviorEvents(input = {}, now = Date.now(), days = 1, types = []) {
+        const allowed = types.length ? new Set(types) : null;
+        const events = [];
+        for (let offset = 0; offset < days; offset += 1) {
+            const day = dayKeyOffset(now, offset);
+            behaviorEventsForDay(input.behaviorHistory || {}, day).forEach((event) => {
+                if (!allowed || allowed.has(event.type)) events.push(event);
+            });
+        }
+        return events.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+    }
+
+    function isBlockedReturnEvent(event = {}) {
+        return event.type === "blocked_page_view" || event.type === "block_redirect";
+    }
+
+    function blockedReturnEventsForDomain(input = {}, domain, now = Date.now(), days = 1) {
+        return behaviorEventsForDomain(input, domain, now, days).filter(isBlockedReturnEvent);
+    }
+
+    function blockedReturnCountForDay(input = {}, day, domain = "") {
+        const normalized = normalizeDomain(domain);
+        return behaviorEventsForDay(input.behaviorHistory || {}, day)
+            .filter((event) => isBlockedReturnEvent(event))
+            .filter((event) => !normalized || normalizeDomain(event.domain) === normalized)
+            .length;
+    }
+
+    function blockedReturnCountsByDomainForDay(input = {}, day) {
+        const counts = {};
+        behaviorEventsForDay(input.behaviorHistory || {}, day).forEach((event) => {
+            if (!isBlockedReturnEvent(event)) return;
+            const domain = normalizeDomain(event.domain);
+            if (!isValidDomain(domain)) return;
+            counts[domain] = Number(counts[domain] || 0) + 1;
+        });
+        return counts;
+    }
+
     function addLongSessionInsight(insights, input, settings, now, dateKey) {
         const thresholds = thresholdsFor(settings);
         const session = input.activeSession || {};
@@ -668,6 +755,436 @@
         });
     }
 
+    function addBlockedReturnInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const todayDomains = behaviorDomains(input, now, 1);
+
+        todayDomains.forEach((domain) => {
+            const events = behaviorEventsForDomain(input, domain, now, 1);
+            const blockCount = countBehaviorEvents(events, ["blocked_page_view", "block_redirect"]);
+            if (blockCount < Math.max(2, Math.floor(thresholds.highVisitCount / 2))) return;
+
+            const hours = events
+                .filter((event) => event.type === "blocked_page_view" || event.type === "block_redirect")
+                .map((event) => Number(event.hour))
+                .filter((hour) => Number.isFinite(hour));
+            const hour = hours.length
+                ? hours.sort((a, b) => hours.filter((h) => h === b).length - hours.filter((h) => h === a).length)[0]
+                : new Date(now).getHours();
+            const label = domainLabel(domain);
+            const windowText = insightWindowPhrase(daypartForHour(hour), hour);
+
+            insights.push(makeInsight(
+                "blocked_return_pattern",
+                domain,
+                `${label} triggered repeated redirects today`,
+                `Saturn interrupted ${pluralize(blockCount, "return")} ${windowText || "today"}`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:blocked`,
+                    notify: blockCount >= thresholds.highVisitCount,
+                    priority: 88 + Math.min(25, blockCount * 3),
+                    context: {
+                        count: blockCount,
+                        hour,
+                        daypart: daypartForHour(hour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addSnoozeLoopInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const todayDomains = behaviorDomains(input, now, 1);
+
+        todayDomains.forEach((domain) => {
+            const events = behaviorEventsForDomain(input, domain, now, 1);
+            const snoozes = events.filter((event) => event.type === "snooze");
+            if (snoozes.length < 2) return;
+
+            const minutes = snoozes.reduce((sum, event) => sum + Math.max(0, Number(event.minutes || 0)), 0);
+            const hour = Number(snoozes[snoozes.length - 1]?.hour ?? new Date(now).getHours());
+            const label = domainLabel(domain);
+
+            insights.push(makeInsight(
+                "snooze_loop",
+                domain,
+                `${label} needed more than one pause today`,
+                `${pluralize(snoozes.length, "snooze")} added ${pluralize(minutes, "minute")} of extra access`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:snooze`,
+                    notify: snoozes.length >= 3,
+                    priority: 84 + Math.min(20, snoozes.length * 5) + (thresholds.highVisitCount <= 5 ? 4 : 0),
+                    context: {
+                        count: snoozes.length,
+                        minutes,
+                        hour,
+                        daypart: daypartForHour(hour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addProtectionCompletedInsights(insights, input, settings, now, dateKey) {
+        const todayDomains = behaviorDomains(input, now, 1);
+
+        todayDomains.forEach((domain) => {
+            const events = behaviorEventsForDomain(input, domain, now, 1);
+            const completed = events
+                .filter((event) => event.type === "scheduled_block_completed" && Number(event.estimatedMs || 0) > 0)
+                .sort((a, b) => Number(b.estimatedMs || 0) - Number(a.estimatedMs || 0))[0];
+            if (!completed) return;
+
+            const estimatedMs = Number(completed.estimatedMs || 0);
+            const hour = Number(completed.hour ?? new Date(now).getHours());
+            const label = domainLabel(domain);
+            insights.push(makeInsight(
+                "protection_completed",
+                domain,
+                `${label} stayed protected through a scheduled block`,
+                `${formatMinutes(estimatedMs)} reclaimed from that window`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:protected`,
+                    notify: false,
+                    priority: 76 + Math.min(20, Math.round(estimatedMs / (30 * MINUTE_MS))),
+                    context: {
+                        estimatedMs,
+                        hour,
+                        daypart: daypartForHour(hour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addNavigationReturnInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const todayDomains = behaviorDomains(input, now, 1);
+        const minQuickReturns = thresholds.highVisitCount <= 5 ? 1 : 2;
+
+        todayDomains.forEach((domain) => {
+            const events = behaviorEventsForDomain(input, domain, now, 1);
+            const afterClose = countBehaviorEvents(events, ["return_after_close"]);
+            const newTabNav = countBehaviorEvents(events, ["new_tab_quick_nav"]);
+            const quickReturnCount = afterClose + newTabNav;
+            if (quickReturnCount < minQuickReturns) return;
+
+            const latest = events
+                .filter((event) => event.type === "return_after_close" || event.type === "new_tab_quick_nav")
+                .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0))[0] || {};
+            const hour = Number(latest.hour ?? new Date(now).getHours());
+            const label = domainLabel(domain);
+            const title = afterClose >= newTabNav
+                ? `${label} keeps coming back after tabs close`
+                : `${label} is showing up in fresh tabs`;
+            const message = afterClose >= newTabNav
+                ? `${pluralize(afterClose, "return")} after closing a tab today`
+                : `${pluralize(newTabNav, "quick new-tab visit")} today`;
+
+            insights.push(makeInsight(
+                "quick_return_pattern",
+                domain,
+                title,
+                message,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:quick-return`,
+                    notify: quickReturnCount >= thresholds.highVisitCount,
+                    priority: 86 + Math.min(24, quickReturnCount * 6),
+                    context: {
+                        count: quickReturnCount,
+                        afterClose,
+                        newTabNav,
+                        hour,
+                        daypart: daypartForHour(hour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addInterspersedVisitInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const events = sortedBehaviorEvents(input, now, 1, ["navigation_visit", "site_switch"])
+            .filter((event) => isValidDomain(event.domain));
+        if (events.length < 5) return;
+
+        const byDomain = new Map();
+        events.forEach((event, index) => {
+            const domain = normalizeDomain(event.domain);
+            if (!byDomain.has(domain)) {
+                byDomain.set(domain, {
+                    visits: 0,
+                    interspersedReturns: 0,
+                    otherDomains: new Set(),
+                    lastIndex: -1,
+                    lastSeenOther: false,
+                    latestHour: Number(event.hour ?? new Date(now).getHours())
+                });
+            }
+            const record = byDomain.get(domain);
+            record.visits += event.type === "navigation_visit" ? 1 : 0;
+            record.latestHour = Number(event.hour ?? record.latestHour);
+
+            if (record.lastIndex >= 0 && record.lastSeenOther) {
+                record.interspersedReturns += 1;
+            }
+            record.lastIndex = index;
+            record.lastSeenOther = false;
+
+            byDomain.forEach((otherRecord, otherDomain) => {
+                if (otherDomain === domain || otherRecord.lastIndex < 0) return;
+                otherRecord.lastSeenOther = true;
+                otherRecord.otherDomains.add(domain);
+            });
+        });
+
+        byDomain.forEach((record, domain) => {
+            const minReturns = thresholds.highVisitCount <= 5 ? 2 : 3;
+            if (record.interspersedReturns < minReturns) return;
+            if (record.otherDomains.size < 2 && record.visits < thresholds.highVisitCount) return;
+
+            const label = domainLabel(domain);
+            const hour = Number(record.latestHour);
+            insights.push(makeInsight(
+                "interspersed_visit_pattern",
+                domain,
+                `${label} keeps reappearing between other sites`,
+                `${pluralize(record.interspersedReturns, "return")} after visiting elsewhere today`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:interspersed`,
+                    notify: record.interspersedReturns >= thresholds.highVisitCount,
+                    priority: 80 + Math.min(24, record.interspersedReturns * 5) + Math.min(8, record.otherDomains.size),
+                    context: {
+                        count: record.interspersedReturns,
+                        visits: record.visits,
+                        otherDomainCount: record.otherDomains.size,
+                        hour,
+                        daypart: daypartForHour(hour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addSubstitutionInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const events = sortedBehaviorEvents(input, now, 1, ["blocked_page_view", "block_redirect", "navigation_visit"]);
+        const substitutions = new Map();
+        const windowMs = 5 * MINUTE_MS;
+
+        events.forEach((event, index) => {
+            if (!isBlockedReturnEvent(event)) return;
+            const blockedDomain = normalizeDomain(event.domain);
+            const blockedAt = Number(event.timestamp || 0);
+            if (!isValidDomain(blockedDomain) || !blockedAt) return;
+
+            for (let nextIndex = index + 1; nextIndex < events.length; nextIndex += 1) {
+                const next = events[nextIndex];
+                const nextAt = Number(next.timestamp || 0);
+                if (!nextAt || nextAt - blockedAt > windowMs) break;
+                if (next.type !== "navigation_visit") continue;
+
+                const substituteDomain = normalizeDomain(next.domain);
+                if (!isValidDomain(substituteDomain) || substituteDomain === blockedDomain) continue;
+                const key = `${blockedDomain}>${substituteDomain}`;
+                const record = substitutions.get(key) || {
+                    blockedDomain,
+                    substituteDomain,
+                    count: 0,
+                    latestHour: Number(next.hour ?? new Date(now).getHours())
+                };
+                record.count += 1;
+                record.latestHour = Number(next.hour ?? record.latestHour);
+                substitutions.set(key, record);
+                break;
+            }
+        });
+
+        substitutions.forEach((record) => {
+            const minCount = thresholds.highVisitCount <= 5 ? 2 : 3;
+            if (record.count < minCount) return;
+
+            insights.push(makeInsight(
+                "substitution_pattern",
+                record.substituteDomain,
+                `After ${domainLabel(record.blockedDomain)} was blocked, ${domainLabel(record.substituteDomain)} became the next stop`,
+                `Opened ${pluralize(record.count, "time")} within five minutes`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:substitution:${record.blockedDomain}`,
+                    notify: false,
+                    priority: 118 + Math.min(20, record.count * 4),
+                    context: {
+                        blockedDomain: record.blockedDomain,
+                        substituteDomain: record.substituteDomain,
+                        count: record.count,
+                        windowMinutes: 5,
+                        hour: record.latestHour,
+                        daypart: daypartForHour(record.latestHour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addBaselineImprovementInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const todayDomains = behaviorDomains(input, now, 1);
+
+        todayDomains.forEach((domain) => {
+            const todayCount = blockedReturnCountForDay(input, dateKey, domain);
+            if (todayCount <= 0) return;
+
+            const recent = [];
+            for (let offset = 1; offset <= 7; offset += 1) {
+                const count = blockedReturnCountForDay(input, dayKeyOffset(now, offset), domain);
+                if (count > 0) recent.push(count);
+            }
+            if (recent.length < 3) return;
+
+            const usualCount = Math.round(recent.reduce((sum, count) => sum + count, 0) / recent.length);
+            if (usualCount < Math.max(4, thresholds.highVisitCount)) return;
+            if (todayCount > Math.max(1, Math.floor(usualCount * 0.7))) return;
+
+            insights.push(makeInsight(
+                "baseline_improvement",
+                domain,
+                `${domainLabel(domain)} returns dropped below your usual pattern`,
+                `Down from your usual ${usualCount} to ${todayCount} today`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:improvement`,
+                    notify: false,
+                    priority: 130 + Math.min(18, usualCount - todayCount),
+                    context: {
+                        todayCount,
+                        usualCount,
+                        historyDays: recent.length
+                    }
+                }
+            ));
+        });
+    }
+
+    function addEscalationInsights(insights, input, settings, now, dateKey) {
+        const thresholds = thresholdsFor(settings);
+        const todayDomains = behaviorDomains(input, now, 1);
+        const cutoffHour = 20;
+
+        todayDomains.forEach((domain) => {
+            const events = blockedReturnEventsForDomain(input, domain, now, 1)
+                .filter((event) => event.source !== "scheduled");
+            const total = events.length;
+            if (total < Math.max(3, Math.floor(thresholds.highVisitCount / 2))) return;
+
+            const lateCount = events.filter((event) => Number(event.hour) >= cutoffHour).length;
+            if (lateCount <= total / 2) return;
+
+            insights.push(makeInsight(
+                "late_escalation",
+                domain,
+                `Most of today's ${domainLabel(domain)} attempts happened after ${compactHourLabel(cutoffHour)}`,
+                `${pluralize(lateCount, "attempt")} after ${compactHourLabel(cutoffHour)} out of ${total} today`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:late-escalation`,
+                    notify: lateCount >= thresholds.highVisitCount,
+                    priority: 115 + Math.min(18, lateCount * 3),
+                    context: {
+                        count: lateCount,
+                        total,
+                        cutoffHour,
+                        hour: cutoffHour,
+                        daypart: daypartForHour(cutoffHour)
+                    }
+                }
+            ));
+        });
+    }
+
+    function addInterventionEffectivenessInsights(insights, input, settings, now, dateKey) {
+        const events = sortedBehaviorEvents(input, now, 1, ["blocked_page_view", "block_redirect"])
+            .filter((event) => isValidDomain(event.domain));
+        const scheduled = events.filter((event) => event.source === "scheduled");
+        const limit = events.filter((event) => event.source !== "scheduled");
+        if (scheduled.length < 2 || scheduled.length <= limit.length) return;
+
+        const topScheduledDomain = Object.entries(scheduled.reduce((counts, event) => {
+            const domain = normalizeDomain(event.domain);
+            counts[domain] = Number(counts[domain] || 0) + 1;
+            return counts;
+        }, {})).sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (!isValidDomain(topScheduledDomain)) return;
+
+        insights.push(makeInsight(
+            "intervention_effectiveness",
+            topScheduledDomain,
+            "Scheduled blocks stopped more returns than your daily limits today",
+            `${scheduled.length} scheduled returns stopped vs ${limit.length} daily-limit ${limit.length === 1 ? "return" : "returns"}`,
+            {
+                now,
+                dateKey,
+                contextKey: `${dateKey}:intervention-effectiveness`,
+                notify: false,
+                priority: 114 + Math.min(20, scheduled.length - limit.length),
+                context: {
+                    scheduledCount: scheduled.length,
+                    limitCount: limit.length,
+                    topDomain: topScheduledDomain
+                }
+            }
+        ));
+    }
+
+    function addMultiDayReturnLeaderInsights(insights, input, settings, now, dateKey) {
+        const wins = {};
+        const windowDays = 5;
+
+        for (let offset = 0; offset < windowDays; offset += 1) {
+            const day = dayKeyOffset(now, offset);
+            const top = Object.entries(blockedReturnCountsByDomainForDay(input, day))
+                .sort((a, b) => b[1] - a[1])[0];
+            if (!top || top[1] <= 0) continue;
+            wins[top[0]] = Number(wins[top[0]] || 0) + 1;
+        }
+
+        Object.entries(wins).forEach(([domain, days]) => {
+            if (days < 3) return;
+
+            insights.push(makeInsight(
+                "multi_day_return_leader",
+                domain,
+                `${domainLabel(domain)} has been your most frequent return for ${days} of the last ${windowDays} days`,
+                `It led your blocked-return list on most recent active days`,
+                {
+                    now,
+                    dateKey,
+                    contextKey: `${dateKey}:multi-day-leader`,
+                    notify: false,
+                    priority: 132 + days * 4,
+                    context: {
+                        days,
+                        windowDays
+                    }
+                }
+            ));
+        });
+    }
+
     function dedupeInsights(insights) {
         const byDomain = new Map();
 
@@ -715,6 +1232,16 @@
         const insights = [];
 
         addLongSessionInsight(insights, input, settings, now, dateKey);
+        addBlockedReturnInsights(insights, input, settings, now, dateKey);
+        addSnoozeLoopInsights(insights, input, settings, now, dateKey);
+        addProtectionCompletedInsights(insights, input, settings, now, dateKey);
+        addNavigationReturnInsights(insights, input, settings, now, dateKey);
+        addInterspersedVisitInsights(insights, input, settings, now, dateKey);
+        addSubstitutionInsights(insights, input, settings, now, dateKey);
+        addBaselineImprovementInsights(insights, input, settings, now, dateKey);
+        addEscalationInsights(insights, input, settings, now, dateKey);
+        addInterventionEffectivenessInsights(insights, input, settings, now, dateKey);
+        addMultiDayReturnLeaderInsights(insights, input, settings, now, dateKey);
         addRecurringTimeBlockInsights(insights, input, settings, now, dateKey);
         addHighVisitFrequencyInsights(insights, input, settings, now, dateKey);
         addUsageIncreaseInsights(insights, input, settings, now, dateKey);

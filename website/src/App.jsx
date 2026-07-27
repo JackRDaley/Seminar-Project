@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 const features = [
   {
     title: "Website blocking",
@@ -51,28 +53,24 @@ const steps = [
 
 const walkthroughs = [
   {
-    eyebrow: "Daily limits",
-    title: "Set a limit before you scroll",
-    detail: "Give each distracting domain a realistic daily budget. When time runs out, Saturn turns the next visit into a decision point.",
-    bullets: ["Domain-specific limits", "Clean remaining-time status", "Simple edits when routines change"],
-    imageSrc: "/saturn-extension-limits-render.png",
-    imageSide: "right"
+    title: "Map the loop",
+    detail: "Daily signals from your browsing behavior, grouped by repeat moments.",
+    tabIndex: 0
   },
   {
-    eyebrow: "Focus schedules",
-    title: "Protect the hours that matter",
-    detail: "Schedule blocks for study sessions, work blocks, sleep windows, or any recurring moment where entertainment should stay out of reach.",
-    bullets: ["Work and study windows", "Recurring schedule support", "Rules that can be stricter when needed"],
-    imageSrc: "/saturn-extension-schedule-render.png",
-    imageSide: "left"
+    title: "Tune the pressure",
+    detail: "Set lighter pauses or firmer limits before the habit takes over.",
+    tabIndex: 1
   },
   {
-    eyebrow: "Activity insight",
-    title: "See the numbers in real time",
-    detail: "See the sites that keep pulling you back, the attempts you avoided, and the moments where a better rule would help.",
-    bullets: ["Blocked attempts and snoozes", "Most-visited domains", "Personalized insights"],
-    imageSrc: "/saturn-extension-dashboard-render.png",
-    imageSide: "right"
+    title: "Protect focus windows",
+    detail: "Schedule deep-work blocks with focused site blocking.",
+    tabIndex: 2
+  },
+  {
+    title: "Review the pattern",
+    detail: "Profile-level context keeps progress, settings, and reclaimed time in perspective.",
+    tabIndex: 3
   }
 ];
 
@@ -106,7 +104,7 @@ const testimonials = [
   ]
 ];
 
-const storeUrl = "https://chromewebstore.google.com/detail/screen-time-manager/pecaajdaecdmikcgfdgldcofdebhfbgo";
+const storeUrl = "https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo";
 const feedbackUrl = "https://www.surveymonkey.com/r/QF2RJ58";
 const productHuntUrl = "https://www.producthunt.com/products/screen-time-manager?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-saturn-screen-time-manager";
 const productHuntBadgeUrl = "https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1168942&theme=light";
@@ -314,41 +312,145 @@ function FrictionDemo() {
   );
 }
 
-function ProductMockup({ imageSrc, title }) {
+function ProductMockup({ activeIndex, items, onTabChange, onUserInteract }) {
+  const frameRef = useRef(null);
+
+  const syncDemoTab = () => {
+    frameRef.current?.contentWindow?.postMessage(
+      { type: "saturn-demo-tab", tabIndex: items[activeIndex].tabIndex },
+      "*",
+    );
+  };
+
+  const resetAndSyncDemo = () => {
+    frameRef.current?.contentWindow?.postMessage({ type: "saturn-demo-reset" }, "*");
+    syncDemoTab();
+  };
+
+  useEffect(() => {
+    syncDemoTab();
+  }, [activeIndex]);
+
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (event.data?.type === "saturn-demo-ready") {
+        syncDemoTab();
+        return;
+      }
+      if (event.data?.type === "saturn-demo-interaction") {
+        onUserInteract();
+        return;
+      }
+      if (event.data?.type !== "saturn-demo-tab-selected") return;
+
+      const nextIndex = items.findIndex((item) => item.tabIndex === event.data.tabIndex);
+      if (nextIndex >= 0) onTabChange(nextIndex, { userInitiated: true });
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [activeIndex, items, onTabChange]);
+
   return (
-    <div className="walkthrough-preview" aria-label={`${title} product preview`}>
-      <img src={imageSrc} alt="" />
+    <div
+      className="walkthrough-preview"
+      aria-label={`${items[activeIndex].title} live product demo`}
+      onFocus={onUserInteract}
+      onPointerDown={onUserInteract}
+    >
+      <iframe
+        className="walkthrough-demo-frame"
+        onLoad={resetAndSyncDemo}
+        ref={frameRef}
+        src="/extension-demo/popup.html?v=exaggerated-stats-1"
+        title="Interactive Saturn extension demo"
+      />
     </div>
   );
 }
 
 function ProductWalkthrough() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const interactionPauseUntilRef = useRef(0);
+  const activeWalkthrough = walkthroughs[activeIndex];
+
+  const pauseAutoSwitching = () => {
+    interactionPauseUntilRef.current = Date.now() + 15000;
+  };
+
+  const selectWalkthrough = (index, options = {}) => {
+    if (options.userInitiated) pauseAutoSwitching();
+    setActiveIndex(index);
+  };
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    if (reducedMotion.matches) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      if (Date.now() < interactionPauseUntilRef.current) return;
+      setActiveIndex((currentIndex) => (currentIndex + 1) % walkthroughs.length);
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <section className="walkthrough-section" id="walkthrough">
-      <div className="section-heading">
-        <span className="section-kicker">Product walkthrough</span>
-        <h2>Not convinced? See for yourself</h2>
-        <p>
-          The strongest rules are the ones you can understand at a glance: what is blocked, why it
-          is blocked, and how much attention the pause is protecting.
-        </p>
-      </div>
-      <div className="walkthrough-stack">
-        {walkthroughs.map((item) => (
-          <article className={`walkthrough-row media-${item.imageSide}`} key={item.title}>
-            <div className="walkthrough-copy">
-              <span className="section-kicker">{item.eyebrow}</span>
-              <h3>{item.title}</h3>
-              <p>{item.detail}</p>
-              <ul>
-                {item.bullets.map((bullet) => (
-                  <li key={bullet}>{bullet}</li>
+      <div className="walkthrough-inner">
+        <div className="section-heading walkthrough-heading">
+          <span className="section-kicker">Product walkthrough</span>
+          <h2>See Saturn in action</h2>
+          <p>
+            See all of Saturn's features from the dashboard to creating an actual limit with our live demo.
+          </p>
+        </div>
+        <div className="walkthrough-showcase">
+          <div className="walkthrough-demo-card" aria-label="Saturn product workflows">
+            <div className="walkthrough-preview-shell">
+              <ProductMockup
+                activeIndex={activeIndex}
+                items={walkthroughs}
+                onTabChange={selectWalkthrough}
+                onUserInteract={pauseAutoSwitching}
+              />
+              <div className="walkthrough-controls" aria-label="Choose product screen">
+                {walkthroughs.map((item, index) => (
+                  <button
+                    aria-label={`Show ${item.title}`}
+                    aria-pressed={activeIndex === index}
+                    className={`walkthrough-dot${activeIndex === index ? " is-active" : ""}`}
+                    key={item.title}
+                    onClick={() => selectWalkthrough(index, { userInitiated: true })}
+                    type="button"
+                  />
                 ))}
-              </ul>
+              </div>
             </div>
-            <ProductMockup imageSrc={item.imageSrc} title={item.eyebrow} />
-          </article>
-        ))}
+            <div className="walkthrough-copy" aria-live="polite">
+              <h3>{activeWalkthrough.title}</h3>
+              <p>{activeWalkthrough.detail}</p>
+            </div>
+          </div>
+          <aside className="walkthrough-nudge" aria-label="Try the Saturn demo">
+            <div className="nudge-orbit" aria-hidden="true">
+              <span className="nudge-planet">
+                <img src="/planets/saturn-app-icon-128.png" alt="" />
+              </span>
+              <span className="nudge-cursor">
+                <Icon name="pointer" />
+              </span>
+            </div>
+            <span className="nudge-kicker">Live demo</span>
+            <h3>Click around. This is a live demo.</h3>
+            <a className="button button-secondary" href={storeUrl} target="_blank" rel="noreferrer">
+              Add Saturn to Chrome
+            </a>
+          </aside>
+        </div>
       </div>
     </section>
   );

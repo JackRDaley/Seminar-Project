@@ -14,7 +14,6 @@ const getDayKey =
 const SETTINGS_KEY = "uiSettings";
 const PERSONAL_INSIGHTS_KEY = "personalInsights";
 const DISMISSED_INSIGHTS_KEY = "dismissedInsights";
-const BEHAVIOR_HISTORY_KEY = "behaviorHistory";
 const PREMIUM_KEY = "premiumState";
 const WHOP_ACTIVATION_NOTICE_KEY = "whopActivationNotice";
 const ONBOARDING_KEY = "onboardingState";
@@ -904,7 +903,7 @@ function clearJourneyMotionClasses() {
   journeyAnimationCleanupTimer = null;
 }
 
-function startJourneyMotion(card, routeTrack, reachedPlanet, onComplete) {
+function startJourneyMotion(card, routeTrack, reachedPlanet) {
   if (journeyAnimationCleanupTimer) {
     window.clearTimeout(journeyAnimationCleanupTimer);
     journeyAnimationCleanupTimer = null;
@@ -921,10 +920,10 @@ function startJourneyMotion(card, routeTrack, reachedPlanet, onComplete) {
     routeTrack?.classList.add("is-planet-reached");
   }
 
-  journeyAnimationCleanupTimer = window.setTimeout(() => {
-    clearJourneyMotionClasses();
-    if (typeof onComplete === "function") onComplete();
-  }, 1450);
+  journeyAnimationCleanupTimer = window.setTimeout(
+    clearJourneyMotionClasses,
+    1450,
+  );
 }
 
 function showPlanetUnlockModal(stop, totalReclaimedMs = 0) {
@@ -974,15 +973,7 @@ function renderJourney(reclaimSummary = { count: 0, estimatedMs: 0 }) {
   const collapsedTitle = $("journeyCollapsedTitle");
   if (collapsedTitle) collapsedTitle.hidden = !collapsed;
 
-  const visual = state.journeyVisual?.shouldAnimate
-    ? state.journeyVisual
-    : {
-        ...(state.journeyVisual || {}),
-        summary: reclaimSummary,
-        previousSummary: null,
-        shouldAnimate: false,
-        reachedPlanet: false,
-      };
+  const visual = state.journeyVisual || { summary: reclaimSummary };
   if (journeyAnimationCleanupTimer && !visual.shouldAnimate) return;
 
   const journey = journeyForTime(
@@ -991,7 +982,10 @@ function renderJourney(reclaimSummary = { count: 0, estimatedMs: 0 }) {
   const previousJourney = visual.previousSummary
     ? journeyForTime(visual.previousSummary.estimatedMs)
     : null;
-  const displayJourney = journey;
+  const displayJourney =
+    visual.reachedPlanet && previousJourney
+      ? { ...previousJourney, progress: 100 }
+      : journey;
   const planet = $("journeyPlanet");
   if (planet) {
     planet.className = `journey-stop-planet planet-${displayJourney.current.id}`;
@@ -1041,7 +1035,6 @@ function renderJourney(reclaimSummary = { count: 0, estimatedMs: 0 }) {
     const previousLeft = previousJourney
       ? journeyMarkerLeft(previousJourney.progress)
       : markerLeft;
-    const reachedPlanetDuringRender = Boolean(visual.reachedPlanet);
     routeTrack.style.setProperty(
       "--journey-progress-left",
       `${journeyMarkerLeft(0)}%`,
@@ -1053,9 +1046,7 @@ function renderJourney(reclaimSummary = { count: 0, estimatedMs: 0 }) {
     routeTrack.style.setProperty("--journey-progress-right", `${markerLeft}%`);
     routeTrack.style.setProperty("--journey-marker-left", `${markerLeft}%`);
     if (visual.shouldAnimate) {
-      startJourneyMotion(card, routeTrack, reachedPlanetDuringRender, () => {
-        if (reachedPlanetDuringRender) renderJourney(reclaimSummary);
-      });
+      startJourneyMotion(card, routeTrack, visual.reachedPlanet);
       if (visual.reachedPlanet && visual.showUnlock) {
         window.setTimeout(
           () =>
@@ -1300,10 +1291,6 @@ function reclaimForSelectedRange() {
   );
 }
 
-function reclaimForJourneyProgress() {
-  return reclaimStatsForHistory();
-}
-
 function usageStatsForOffset(offset) {
   if (Number(offset) === 0)
     return state.data.allStatsToday || state.data.statsToday || {};
@@ -1443,7 +1430,7 @@ function renderStats(options = {}) {
   setText("statSnoozesDelta", formatPercentDelta(snoozes, previousSnoozes));
   renderBenefitCards(currentOffsets);
   renderTodaySummary(range, currentStats, currentTotals, reclaim, snoozes);
-  renderJourney(reclaimForJourneyProgress());
+  renderJourney(reclaim);
 }
 
 function syncStatRangeControl() {
@@ -1561,28 +1548,10 @@ function buildTodaySummary(range, stats, totalsValue, reclaim, snoozes) {
   }
 
   let pull = `No strong pulls ${suffix}.`;
-  let pullLabel = "Strongest pull";
   let primary = { label: "Start focus block", mode: "start-focus" };
   let secondary = { label: "Review limits", mode: "review-limits" };
-  const summaryInsight = summaryInsightForToday();
 
-  if (summaryInsight) {
-    const domain = normalizeDomain(summaryInsight.domain);
-    pullLabel = isBenefitInsight(summaryInsight)
-      ? "Today's progress"
-      : "Pattern insight";
-    pull = insightSummaryText(summaryInsight);
-    if (domain && isValidDomain(domain) && !isBenefitInsight(summaryInsight)) {
-      primary =
-        summaryInsight.action === "addLimit"
-          ? { label: "Add limit", mode: "protect-domain", domain }
-          : { label: "Review pattern", mode: "review-usage", domain };
-      secondary = { label: "Review usage", mode: "review-usage" };
-    } else {
-      primary = { label: "Review progress", mode: "review-usage" };
-      secondary = { label: "Review limits", mode: "review-limits" };
-    }
-  } else if (strongest) {
+  if (strongest) {
     const [domain, entry] = strongest;
     const strongestTime = timeMs(entry);
     const next = ranked[1];
@@ -1617,7 +1586,6 @@ function buildTodaySummary(range, stats, totalsValue, reclaim, snoozes) {
     pauseCount: String(snoozes),
     pauseLabel: `${snoozes === 1 ? "pause" : "pauses"}, not failures`,
     peakLabel: hasPeak ? formatHourRangeTooltip(peak.hour) : "--",
-    pullLabel,
     pull,
     primary,
     secondary,
@@ -1680,7 +1648,6 @@ function renderTodaySummary(range, stats, totalsValue, reclaim, snoozes) {
   setText("todayPauseCount", summary.pauseCount);
   setText("todayPauseLabel", summary.pauseLabel);
   setText("todayPeakTimeframe", summary.peakLabel);
-  setText("todayPullLabel", summary.pullLabel);
   setText("todayPullCopy", summary.pull);
 
   const protectButton = $("protectPeakHourBtn");
@@ -1989,32 +1956,6 @@ function insightTimeLabel(timestamp) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function stripInsightHtml(value = "") {
-  const template = document.createElement("template");
-  template.innerHTML = String(value || "");
-  return (template.content.textContent || "").replace(/\s+/g, " ").trim();
-}
-
-function summaryInsightForToday() {
-  if (($("statRange")?.value || "Today") !== "Today") return null;
-  const insights = personalInsightItems().filter(
-    (insight) => insight?.id && insight.type !== "benefit_time_saved",
-  );
-  if (!insights.length) return null;
-
-  const currentHour = new Date().getHours();
-  const index = currentHour % insights.length;
-  return insights[index];
-}
-
-function insightSummaryText(insight = {}) {
-  const domain = normalizeDomain(insight.domain);
-  const headline = stripInsightHtml(insightPersonalHeadlineHtml(insight, domain));
-  const subheading = stripInsightHtml(insightPersonalSubheadingHtml(insight, domain));
-  if (headline && subheading) return `${headline}. ${subheading}.`;
-  return headline || subheading || insight.message || insight.title || "";
-}
-
 function selectedStatsRangeLabel() {
   return $("statRange")?.value || "Today";
 }
@@ -2146,7 +2087,6 @@ function insightReadiness() {
     allStatsToday: state.data.allStatsToday || state.data.statsToday || {},
     statsHistory: state.data.statsHistory || {},
     hourlyUsageHistory: state.data.hourlyUsageHistory || {},
-    behaviorHistory: state.data[BEHAVIOR_HISTORY_KEY] || {},
     settings: state.settings || {},
     now: Date.now(),
   });
@@ -2622,26 +2562,26 @@ function insightPersonalSubheadingHtml(insight = {}, domain = "") {
     const streak = Number(context.streak || 0);
     if (streak > 1)
       return `${insightHeadlineEmphasis(formatDayCount(streak))} in a row shows the boundary is becoming a habit`;
-    return "You've stayed inside the boundary you set for yourself";
+    return "You stayed inside the boundary you set for yourself";
   }
   if (insight.type === "long_session" && context.durationMs) {
-    return `You've been active for ${insightHeadlineEmphasis(formatInsightMinutes(context.durationMs))} straight`;
+    return `Active for ${insightHeadlineEmphasis(formatInsightMinutes(context.durationMs))} straight`;
   }
   if (insight.type === "recurring_time_block" && context.consecutiveDays) {
     const windowText = insightWindowPhrase(context, { usePeak: false });
     const daysText = insightDayCountText(context, true);
     if (windowText && daysText) {
-      return `You've been active at ${escapeHtml(windowText)} for ${insightHeadlineEmphasis(daysText)}`;
+      return `Active ${escapeHtml(windowText)} for ${insightHeadlineEmphasis(daysText)}`;
     }
-    if (daysText) return `You've been active for ${insightHeadlineEmphasis(daysText)}`;
+    if (daysText) return `Active for ${insightHeadlineEmphasis(daysText)}`;
     return "";
   }
   if (insight.type === "high_visit_frequency" && context.visits) {
-    return `You've opened ${insightHeadlineEmphasis(pluralizeInsight(context.visits, "time"))} this hour`;
+    return `Opened ${insightHeadlineEmphasis(pluralizeInsight(context.visits, "time"))} this hour`;
   }
   if (insight.type === "usage_increase" && context.ratio) {
     const windowText = insightWindowPhrase(context);
-    return `Your usage ${windowText ? `${escapeHtml(windowText)} ` : ""}rose ${insightHeadlineEmphasis(formatInsightIncreasePercent(context.ratio))} today`;
+    return `Usage ${windowText ? `${escapeHtml(windowText)} ` : ""}rose ${insightHeadlineEmphasis(formatInsightIncreasePercent(context.ratio))} today`;
   }
   if (insight.type === "blocked_return_pattern" && context.count) {
     const windowText = insightWindowPhrase(context, { usePeak: false });
@@ -3310,7 +3250,6 @@ async function loadAll(options = {}) {
     "allStatsToday",
     "statsHistory",
     "hourlyUsageHistory",
-    BEHAVIOR_HISTORY_KEY,
     PERSONAL_INSIGHTS_KEY,
     DISMISSED_INSIGHTS_KEY,
     "snoozeHistory",
@@ -3334,7 +3273,7 @@ async function loadAll(options = {}) {
     ...(state.data[ONBOARDING_KEY] || {}),
   };
   if (options.updateJourneyDisplay === true || !state.journeyVisual) {
-    prepareJourneyVisual(reclaimForJourneyProgress(), {
+    prepareJourneyVisual(reclaimForSelectedRange(), {
       persist: options.updateJourneyDisplay === true,
     });
   }
@@ -4486,7 +4425,7 @@ function bindEvents() {
   $("statRange")?.addEventListener("change", () => {
     syncStatRangeControl();
     state.selectedHourlyHour = null;
-    prepareJourneyVisual(reclaimForJourneyProgress(), { persist: false });
+    prepareJourneyVisual(reclaimForSelectedRange(), { persist: false });
     renderAll();
   });
   $("statRangeButton")?.addEventListener("click", () => {
@@ -4625,6 +4564,7 @@ function bindEvents() {
         "allStatsToday",
         "statsHistory",
         "hourlyUsageHistory",
+        BLOCK_RECLAIM_KEY,
       ];
       const isLiveUsageOnly = changedWatchedKeys.every((key) =>
         liveUsageKeys.includes(key),
@@ -4634,7 +4574,6 @@ function bindEvents() {
         liveUsageOnly: isLiveUsageOnly,
         suppressRankingMotion: isLiveUsageOnly,
         updateRankingInPlace: isLiveUsageOnly,
-        updateJourneyDisplay: changedWatchedKeys.includes(BLOCK_RECLAIM_KEY),
       });
     }
   });

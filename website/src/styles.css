@@ -33,7 +33,10 @@ html {
 body {
   margin: 0;
   color: var(--text);
-  background: linear-gradient(180deg, #07101f, var(--bg) 46%, #050914);
+  background:
+    linear-gradient(128deg, rgba(100, 167, 255, 0.12) 0%, transparent 38%),
+    linear-gradient(236deg, rgba(40, 217, 255, 0.08) 0%, transparent 42%),
+    linear-gradient(180deg, #07101f, var(--bg) 46%, #050914);
   min-width: 320px;
 }
 
@@ -42,11 +45,11 @@ body::before {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 54px 54px;
+  background:
+    linear-gradient(104deg, transparent 0%, rgba(100, 167, 255, 0.08) 28%, transparent 56%),
+    linear-gradient(252deg, transparent 4%, rgba(40, 217, 255, 0.06) 36%, transparent 68%);
   mask-image: linear-gradient(to bottom, black, transparent 84%);
+  pointer-events: none;
 }
 
 a {
@@ -663,83 +666,234 @@ p {
 }
 
 .walkthrough-section {
+  width: 100%;
+  max-width: none;
+  padding: 62px max(20px, calc((100vw - var(--max)) / 2));
   border-top: 1px solid rgba(149, 179, 255, 0.12);
   border-bottom: 1px solid rgba(149, 179, 255, 0.12);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(100, 167, 255, 0.08), transparent 28rem),
+    rgba(6, 11, 23, 0.66);
 }
 
-.walkthrough-stack {
-  display: grid;
-  gap: 22px;
+.walkthrough-inner {
+  width: min(var(--max), 100%);
+  margin: 0 auto;
 }
 
-.walkthrough-row {
+.walkthrough-heading {
+  max-width: 680px;
+  margin-right: auto;
+  margin-bottom: 24px;
+  margin-left: auto;
+  text-align: center;
+}
+
+.walkthrough-showcase {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 0.75fr) minmax(360px, 0.8fr);
-  gap: 28px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
+  justify-items: center;
+}
+
+.walkthrough-demo-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: start;
+  max-width: 644px;
+  margin: 0 auto;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 28px;
+  border-radius: 18px;
+  padding: clamp(18px, 2.4vw, 24px);
   background: rgba(14, 24, 44, 0.66);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
 }
 
-.walkthrough-row.media-left .walkthrough-copy {
-  order: 2;
-}
-
-.walkthrough-row.media-left .walkthrough-preview {
-  order: 1;
+.walkthrough-copy {
+  max-width: 520px;
+  margin-right: auto;
+  margin-left: auto;
+  text-align: center;
 }
 
 .walkthrough-copy h3 {
-  max-width: 560px;
-  font-size: 2.1rem;
+  margin-bottom: 8px;
+  font-size: clamp(1.42rem, 2vw, 1.78rem);
   line-height: 1.08;
 }
 
-.walkthrough-copy ul {
+.walkthrough-copy p {
+  max-width: 500px;
+  margin-bottom: 0;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
+.walkthrough-preview-shell {
   display: grid;
-  gap: 10px;
-  margin: 22px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.walkthrough-copy li {
-  position: relative;
-  padding-left: 28px;
-  color: var(--text);
-  font-weight: 820;
-}
-
-.walkthrough-copy li::before {
-  content: "";
-  position: absolute;
-  top: 0.55em;
-  left: 0;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--mint);
-  box-shadow: 0 0 18px rgba(94, 240, 167, 0.46);
+  justify-self: center;
+  width: 560px;
+  max-width: 100%;
+  min-width: 0;
+  gap: 14px;
 }
 
 .walkthrough-preview {
   position: relative;
-  min-height: 390px;
-  overflow: hidden;
-  border: 1px solid rgba(123, 188, 255, 0.32);
-  border-radius: 24px;
-  background: rgba(5, 10, 20, 0.48);
+  width: 560px;
+  max-width: 100%;
+  height: 800px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.walkthrough-preview img {
-  width: 100%;
-  height: 100%;
-  min-height: 390px;
+.walkthrough-demo-frame {
+  display: block;
+  width: 560px;
+  height: 800px;
+  border: 0;
+  background: #120a08;
+}
+
+.walkthrough-nudge {
+  position: absolute;
+  top: 50%;
+  left: calc(50% + 382px);
+  width: min(300px, calc(50vw - 402px));
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  min-height: 420px;
+  padding: 24px 0;
+  transform: translateY(-50%);
+}
+
+.nudge-orbit {
+  position: relative;
+  width: 196px;
+  aspect-ratio: 1;
+  margin-bottom: 6px;
+}
+
+.nudge-orbit::before,
+.nudge-orbit::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(255, 177, 138, 0.24);
+  border-radius: 50%;
+  transform: rotate(-18deg) scaleY(0.42);
+}
+
+.nudge-orbit::after {
+  inset: 38px;
+  border-color: rgba(143, 210, 216, 0.18);
+  transform: rotate(18deg) scaleY(0.48);
+}
+
+.nudge-planet,
+.nudge-cursor {
+  position: absolute;
+  display: grid;
+  place-items: center;
+}
+
+.nudge-planet {
+  top: 54px;
+  left: 58px;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: rgba(255, 138, 97, 0.08);
+  box-shadow: 0 0 42px rgba(255, 138, 97, 0.18);
+}
+
+.nudge-planet img {
+  width: 58px;
+  height: 58px;
   object-fit: contain;
-  object-position: top center;
-  opacity: 0.94;
+}
+
+.nudge-cursor {
+  right: 18px;
+  bottom: 36px;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 177, 138, 0.3);
+  border-radius: 16px;
+  color: var(--cream);
+  background:
+    linear-gradient(145deg, rgba(255, 138, 97, 0.22), rgba(247, 231, 214, 0.05)),
+    rgba(18, 10, 8, 0.82);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.28);
+}
+
+.nudge-kicker {
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.walkthrough-nudge h3 {
+  max-width: 260px;
+  margin-bottom: 0;
+  font-size: clamp(1.65rem, 2.4vw, 2.1rem);
+  line-height: 1;
+}
+
+.walkthrough-nudge p {
+  max-width: 270px;
+  margin-bottom: 4px;
+  color: rgba(247, 231, 214, 0.68);
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
+.walkthrough-nudge .button {
+  justify-self: start;
+}
+
+.walkthrough-controls {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.walkthrough-dot {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: rgba(247, 231, 214, 0.2);
+  cursor: pointer;
+  transition: width 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.walkthrough-dot:hover,
+.walkthrough-dot:focus-visible {
+  background: rgba(247, 231, 214, 0.34);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.walkthrough-dot:focus-visible {
+  box-shadow: 0 0 0 4px rgba(255, 138, 97, 0.18);
+}
+
+.walkthrough-dot.is-active {
+  width: 32px;
+  background: linear-gradient(90deg, var(--gold, #ffb18a), var(--orange, #ff8a61));
+  box-shadow: 0 0 18px rgba(255, 138, 97, 0.28);
 }
 
 .journey-section {
@@ -1258,7 +1412,6 @@ p {
 
   .hero,
   .friction-section,
-  .walkthrough-row,
   .calculator-section,
   .journey-card,
   .problem-section,
@@ -1280,9 +1433,34 @@ p {
     grid-template-columns: 1fr;
   }
 
-  .walkthrough-row.media-left .walkthrough-copy,
-  .walkthrough-row.media-left .walkthrough-preview {
-    order: initial;
+  .walkthrough-demo-card {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .walkthrough-showcase {
+    grid-template-columns: minmax(0, 644px);
+    gap: 22px;
+  }
+
+  .walkthrough-nudge {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: auto;
+    transform: none;
+  }
+
+  .walkthrough-nudge {
+    grid-template-columns: 196px minmax(0, 1fr);
+    align-items: center;
+    min-height: 0;
+    padding: 2px 6px 0;
+  }
+
+  .walkthrough-nudge .nudge-orbit {
+    grid-row: 1 / 5;
+    margin-bottom: 0;
   }
 
   .feature-grid {
@@ -1359,7 +1537,6 @@ p {
   .friction-section,
   .flow-section,
   .feature-section,
-  .walkthrough-section,
   .calculator-section,
   .journey-section,
   .problem-section,
@@ -1382,9 +1559,102 @@ p {
   .feedback-section,
   .friction-section,
   .journey-card,
-  .walkthrough-row,
   .final-cta {
     padding: 22px;
+  }
+
+  .walkthrough-section {
+    padding: 54px 0 64px;
+  }
+
+  .walkthrough-inner {
+    width: 100%;
+  }
+
+  .walkthrough-heading {
+    width: min(var(--max), calc(100% - 32px));
+    margin-bottom: 28px;
+    text-align: left;
+  }
+
+  .walkthrough-demo-card {
+    width: calc(100% - 32px);
+    padding: 20px;
+  }
+
+  .walkthrough-showcase {
+    gap: 22px;
+  }
+
+  .walkthrough-preview-shell {
+    justify-self: stretch;
+    width: min(100%, 316px);
+    margin: 0 auto;
+  }
+
+  .walkthrough-preview {
+    width: 316px;
+    height: 451px;
+  }
+
+  .walkthrough-demo-frame {
+    transform: scale(0.5643);
+    transform-origin: top left;
+  }
+
+  .walkthrough-copy {
+    max-width: none;
+  }
+
+  .walkthrough-copy h3 {
+    font-size: clamp(1.45rem, 7vw, 1.9rem);
+  }
+
+  .walkthrough-copy p {
+    font-size: 0.96rem;
+  }
+
+  .walkthrough-nudge {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    width: calc(100% - 32px);
+    margin: 0 auto;
+    padding: 0 18px;
+    text-align: center;
+  }
+
+  .walkthrough-nudge .nudge-orbit {
+    grid-row: auto;
+    width: 150px;
+  }
+
+  .nudge-planet {
+    top: 41px;
+    left: 44px;
+    width: 58px;
+    height: 58px;
+  }
+
+  .nudge-planet img {
+    width: 46px;
+    height: 46px;
+  }
+
+  .nudge-cursor {
+    right: 12px;
+    bottom: 28px;
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+  }
+
+  .walkthrough-nudge h3,
+  .walkthrough-nudge p {
+    max-width: 320px;
+  }
+
+  .walkthrough-nudge .button {
+    justify-self: stretch;
   }
 
   .journey-section {
@@ -1536,11 +1806,6 @@ p {
     transform: none;
   }
 
-  .walkthrough-preview,
-  .walkthrough-preview img {
-    min-height: 320px;
-  }
-
   .site-footer {
     flex-direction: column;
     align-items: flex-start;
@@ -1587,17 +1852,17 @@ p {
 
 body {
   background:
-    linear-gradient(118deg, rgba(212, 106, 68, 0.16) 0%, rgba(212, 106, 68, 0.055) 34%, transparent 58%),
-    linear-gradient(180deg, #19110f 0%, #100807 48%, #1a100d 100%);
+    linear-gradient(122deg, rgba(212, 106, 68, 0.22) 0%, rgba(255, 138, 97, 0.09) 32%, transparent 58%),
+    linear-gradient(238deg, rgba(255, 177, 138, 0.11) 0%, rgba(247, 231, 214, 0.035) 30%, transparent 56%),
+    linear-gradient(180deg, #1a100d 0%, #100807 48%, #1c110e 100%);
 }
 
 body::before {
-  background-image:
-    linear-gradient(rgba(247, 231, 214, 0.026) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(247, 231, 214, 0.022) 1px, transparent 1px);
-  background-position: 0 0, 0 0;
-  background-size: 72px 72px, 72px 72px;
-  opacity: 0.72;
+  background:
+    linear-gradient(106deg, transparent 0%, rgba(212, 106, 68, 0.14) 28%, rgba(255, 138, 97, 0.06) 44%, transparent 68%),
+    linear-gradient(254deg, transparent 6%, rgba(255, 177, 138, 0.08) 38%, transparent 72%),
+    linear-gradient(180deg, rgba(247, 231, 214, 0.035), transparent 36%);
+  opacity: 0.82;
   mask-image: linear-gradient(to bottom, black 0%, black 58%, transparent 92%);
 }
 
@@ -2013,7 +2278,6 @@ p,
 .proof-item,
 .glow-card,
 .friction-section,
-.walkthrough-row,
 .journey-card,
 .faq-list details,
 .privacy-section,
@@ -2069,13 +2333,35 @@ p,
 
 .walkthrough-section {
   border-color: rgba(247, 231, 214, 0.1);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 138, 97, 0.16), transparent 28rem),
+    linear-gradient(128deg, rgba(212, 106, 68, 0.13), transparent 42%),
+    linear-gradient(238deg, rgba(255, 177, 138, 0.08), transparent 46%),
+    linear-gradient(180deg, rgba(24, 13, 10, 0.98), rgba(12, 7, 6, 0.98));
+}
+
+.walkthrough-heading {
+  color: var(--cream);
+}
+
+.walkthrough-demo-card {
+  border-color: rgba(247, 231, 214, 0.14);
+  background:
+    linear-gradient(145deg, rgba(255, 138, 97, 0.08), transparent 54%),
+    rgba(247, 231, 214, 0.055);
 }
 
 .walkthrough-preview {
-  min-height: 360px;
-  border-color: rgba(255, 177, 138, 0.28);
-  background:
-    rgba(15, 9, 8, 0.7);
+  background: transparent;
+}
+
+.walkthrough-dot {
+  background: rgba(86, 78, 74, 0.72);
+}
+
+.walkthrough-dot:hover,
+.walkthrough-dot:focus-visible {
+  background: rgba(124, 108, 99, 0.86);
 }
 
 .friction-section {
@@ -2211,10 +2497,6 @@ input[type="range"] {
 
   .preview-chart {
     height: 92px;
-  }
-
-  .walkthrough-preview {
-    min-height: 300px;
   }
 
 }

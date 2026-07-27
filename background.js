@@ -66,6 +66,7 @@ const KEYS = Object.freeze({
   activeBlocks: "activeBlocks",
   snoozedDomains: "snoozedDomains",
   snoozeHistory: "snoozeHistory",
+  behaviorHistory: "behaviorHistory",
   statsHistory: "statsHistory",
   recentlyReset: "recentlyReset",
   activeSession: "activeSession",
@@ -116,6 +117,10 @@ const INSIGHT_ANALYSIS_THROTTLE_MS = 5 * 60 * 1000;
 const INSIGHT_NOTIFICATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 const INSIGHT_MAX_STORED = 24;
 const DISMISSED_INSIGHT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const BEHAVIOR_HISTORY_RETENTION_DAYS = 30;
+const BEHAVIOR_HISTORY_MAX_EVENTS_PER_DAY = 200;
+const RECENT_TAB_CLOSE_RETURN_MS = 2 * 60 * 1000;
+const NEW_TAB_NAVIGATION_WINDOW_MS = 45 * 1000;
 
 function shouldSendAnalytics() {
   return chrome.runtime?.id === ANALYTICS_PRODUCTION_EXTENSION_ID;
@@ -128,6 +133,9 @@ const tokenCaches = {
 const alertClaims = new Set();
 const insightNotificationClaims = new Set();
 const snoozeEnforcementTimers = new Map();
+const tabDomainMemory = new Map();
+const recentClosedDomains = new Map();
+const recentCreatedTabs = new Map();
 
 let activeTabId = null;
 let activeDomain = "";
@@ -1108,6 +1116,8 @@ async function setActiveDomain(tabId, countVisit = false, options = {}) {
   const shouldEnforce = options.enforce !== false;
   const shouldBadge = options.badge !== false;
   const previousDomain = activeDomain;
+  const numericTabId = tabId == null ? NaN : Number(tabId);
+  const stableTabId = Number.isFinite(numericTabId) ? numericTabId : null;
   if (!(await isBrowserFocused())) {
     await clearActiveLimitAlarms();
     await clearActiveSession();
@@ -1117,11 +1127,54 @@ async function setActiveDomain(tabId, countVisit = false, options = {}) {
   const tab =
     tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
   const domain = domainFromUrl(tab?.url || "");
+  const previousTabDomain =
+    stableTabId != null ? tabDomainMemory.get(stableTabId) || "" : "";
   setActiveContext(tabId, domain, 0);
   await persistActiveSession();
 
   if (domain && countVisit) {
     await updateDomainActivity(domain, { deltaMs: 0, countVisit: true });
+    pruneRecentNavigationMemory();
+    await recordBehaviorEvent({
+      type: "navigation_visit",
+      domain,
+      fromDomain: previousDomain && previousDomain !== domain ? previousDomain : previousTabDomain,
+      tabId: stableTabId,
+    });
+    if (previousDomain && previousDomain !== domain) {
+      await recordBehaviorEvent({
+        type: "site_switch",
+        domain,
+        fromDomain: previousDomain,
+        tabId: stableTabId,
+      });
+    }
+    const closedAt = recentClosedDomains.get(domain);
+    if (closedAt && Date.now() - closedAt <= RECENT_TAB_CLOSE_RETURN_MS) {
+      recentClosedDomains.delete(domain);
+      await recordBehaviorEvent({
+        type: "return_after_close",
+        domain,
+        tabId: stableTabId,
+      });
+    }
+    const createdAt =
+      stableTabId != null ? recentCreatedTabs.get(stableTabId) : null;
+    if (
+      createdAt &&
+      Date.now() - Number(createdAt || 0) <= NEW_TAB_NAVIGATION_WINDOW_MS
+    ) {
+      recentCreatedTabs.delete(stableTabId);
+      await recordBehaviorEvent({
+        type: "new_tab_quick_nav",
+        domain,
+        tabId: stableTabId,
+      });
+    }
+  }
+  if (stableTabId != null) {
+    if (domain) tabDomainMemory.set(stableTabId, domain);
+    else tabDomainMemory.delete(stableTabId);
   }
   if (previousDomain && previousDomain !== domain) {
     await clearActiveLimitAlarms(previousDomain);
@@ -1347,6 +1400,12 @@ async function useImmutableOverrideForTarget(target) {
     [ADMIN_OVERRIDE_KEY]: false,
     [ADMIN_OVERRIDE_LAST_USED_KEY]: getDayKey(),
   });
+  await recordBehaviorEvent({
+    type: "immutable_override",
+    domain: target.domain,
+    source: target.source,
+    tier: "immutable",
+  });
 
   let redirected = false;
   if (target.tabId != null) {
@@ -1462,6 +1521,120 @@ function dayKeyForTimestamp(timestamp = Date.now()) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
+function emptyBehaviorDay() {
+  return {
+    count: 0,
+    byType: {},
+    byDomain: {},
+    byHour: {},
+    events: [],
+  };
+}
+
+function pruneBehaviorHistory(history = {}, now = Date.now()) {
+  const kept = {};
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - (BEHAVIOR_HISTORY_RETENTION_DAYS - 1));
+  cutoff.setHours(0, 0, 0, 0);
+
+  Object.entries(history || {}).forEach(([day, value]) => {
+    const parsed = new Date(`${day}T00:00:00`);
+    if (Number.isNaN(parsed.getTime()) || parsed.getTime() < cutoff.getTime())
+      return;
+    kept[day] = value;
+  });
+  return kept;
+}
+
+function pruneRecentNavigationMemory(now = Date.now()) {
+  for (const [domain, timestamp] of recentClosedDomains.entries()) {
+    if (now - Number(timestamp || 0) > RECENT_TAB_CLOSE_RETURN_MS) {
+      recentClosedDomains.delete(domain);
+    }
+  }
+
+  for (const [tabId, timestamp] of recentCreatedTabs.entries()) {
+    if (now - Number(timestamp || 0) > NEW_TAB_NAVIGATION_WINDOW_MS) {
+      recentCreatedTabs.delete(tabId);
+    }
+  }
+}
+
+async function recordBehaviorEvent(event = {}) {
+  const timestamp = Number(event.timestamp || Date.now());
+  const domain = normalizeDomain(event.domain);
+  const type = String(event.type || "").trim();
+  if (!type || !Number.isFinite(timestamp)) return false;
+
+  const normalizedEvent = {
+    type,
+    timestamp,
+    hour: new Date(timestamp).getHours(),
+  };
+  if (isValidDomain(domain)) normalizedEvent.domain = domain;
+
+  const source = event.source === "scheduled" ? "scheduled" : event.source;
+  if (source) normalizedEvent.source = source;
+
+  const tier = String(event.tier || "").trim().toLowerCase();
+  if (tier) normalizedEvent.tier = normalizeTier(tier, "standard");
+
+  const minutes = Math.max(0, Number(event.minutes || 0));
+  if (minutes > 0) normalizedEvent.minutes = minutes;
+
+  const estimatedMs = Math.max(0, Number(event.estimatedMs || 0));
+  if (estimatedMs > 0) normalizedEvent.estimatedMs = estimatedMs;
+
+  const fromDomain = normalizeDomain(event.fromDomain);
+  if (isValidDomain(fromDomain) && fromDomain !== normalizedEvent.domain) {
+    normalizedEvent.fromDomain = fromDomain;
+  }
+
+  const tabId = Number(event.tabId);
+  if (Number.isFinite(tabId)) normalizedEvent.tabId = tabId;
+
+  const day = dayKeyForTimestamp(timestamp);
+  const data = await get([KEYS.behaviorHistory]);
+  const history = pruneBehaviorHistory(
+    data[KEYS.behaviorHistory] || {},
+    timestamp,
+  );
+  const current = {
+    ...emptyBehaviorDay(),
+    ...(history[day] || {}),
+  };
+  current.byType = { ...(current.byType || {}) };
+  current.byDomain = { ...(current.byDomain || {}) };
+  current.byHour = { ...(current.byHour || {}) };
+  current.events = Array.isArray(current.events) ? current.events.slice() : [];
+
+  current.count = Number(current.count || 0) + 1;
+  current.byType[type] = Number(current.byType[type] || 0) + 1;
+
+  if (normalizedEvent.domain) {
+    current.byDomain[normalizedEvent.domain] ||= {};
+    current.byDomain[normalizedEvent.domain][type] =
+      Number(current.byDomain[normalizedEvent.domain][type] || 0) + 1;
+  }
+
+  const hourKey = String(normalizedEvent.hour).padStart(2, "0");
+  current.byHour[hourKey] ||= {};
+  current.byHour[hourKey][type] =
+    Number(current.byHour[hourKey][type] || 0) + 1;
+  current.events.push(normalizedEvent);
+  current.events = current.events.slice(-BEHAVIOR_HISTORY_MAX_EVENTS_PER_DAY);
+
+  await set({
+    [KEYS.behaviorHistory]: {
+      ...history,
+      [day]: current,
+    },
+  });
+
+  await maybeGenerateInsightsAfterActivity({ allowNotifications: true });
+  return true;
+}
+
 function scheduledBreakMs(block = {}, now = Date.now()) {
   const accumulated = Math.max(0, Number(block.breakMs || 0));
   const startedAt = Number(block.breakStartedAt || 0);
@@ -1494,6 +1667,15 @@ function scheduledContributionMs(block = {}, endedAt = Date.now()) {
 async function addScheduledReclaimForBlock(block = {}, endedAt = Date.now()) {
   const estimatedMs = scheduledContributionMs(block, endedAt);
   if (estimatedMs <= 0) return false;
+
+  await recordBehaviorEvent({
+    type: "scheduled_block_completed",
+    domain: block.domain,
+    source: "scheduled",
+    tier: normalizeTier(block.tier, "standard"),
+    estimatedMs,
+    timestamp: endedAt,
+  });
 
   return addBlockReclaim({
     source: "scheduled",
@@ -1577,6 +1759,12 @@ async function enforceIfNeeded(tabId = activeTabId) {
         ),
       })
       .catch(() => {});
+    await recordBehaviorEvent({
+      type: "block_redirect",
+      domain,
+      source: "scheduled",
+      tier: normalizeTier(scheduled.tier, "standard"),
+    });
     return true;
   }
 
@@ -1587,6 +1775,12 @@ async function enforceIfNeeded(tabId = activeTabId) {
     await chrome.tabs
       .update(tabId, { url: blockedUrl(domain, "limit", tier, tab.url) })
       .catch(() => {});
+    await recordBehaviorEvent({
+      type: "block_redirect",
+      domain,
+      source: "limit",
+      tier,
+    });
     return true;
   }
 
@@ -1962,6 +2156,7 @@ async function generateInsights(options = {}) {
     allStatsToday: data[KEYS.allStatsToday] || data[KEYS.statsToday] || {},
     statsHistory: data[KEYS.statsHistory] || {},
     hourlyUsageHistory: data[KEYS.hourlyUsageHistory] || {},
+    behaviorHistory: data[KEYS.behaviorHistory] || {},
     blockedDomains: data[KEYS.blockedDomains] || {},
     activeSession: data[KEYS.activeSession] || activeSessionRecord(),
     settings,
@@ -2075,7 +2270,7 @@ async function syncActionBadge(options = {}) {
   await chrome.action.setBadgeText({ text }).catch(() => {});
 }
 
-async function resetDomainUsage(domain) {
+async function resetDomainUsage(domain, options = {}) {
   const normalized = normalizeDomain(domain);
   if (!isValidDomain(normalized)) return false;
 
@@ -2110,6 +2305,11 @@ async function resetDomainUsage(domain) {
   await queueDnrRulesSync();
   await scheduleActiveLimitWakeups(normalized);
   await syncActionBadge();
+  await recordBehaviorEvent({
+    type: options.fromBlockedPage ? "undo_block" : "reset_usage",
+    domain: normalized,
+    source: "limit",
+  });
   return true;
 }
 
@@ -2285,6 +2485,13 @@ async function snoozeDomain(domain, minutes, challengeToken = null) {
   const today = getDayKey();
   const snoozeHistory = data[KEYS.snoozeHistory] || {};
   snoozeHistory[today] = Number(snoozeHistory[today] || 0) + 1;
+  await recordBehaviorEvent({
+    type: "snooze",
+    domain: normalized,
+    source: scheduled ? "scheduled" : "limit",
+    tier,
+    minutes: Number(minutes || 5),
+  });
 
   const updates = {
     [KEYS.snoozedDomains]: snoozedDomains,
@@ -2425,6 +2632,7 @@ async function initializeExtension(options = {}) {
     KEYS.dismissedInsights,
     KEYS.insightNotificationHistory,
     KEYS.insightNotificationDaily,
+    KEYS.behaviorHistory,
   ]);
   await set({
     [KEYS.onboarding]: data[KEYS.onboarding] || {
@@ -2441,6 +2649,9 @@ async function initializeExtension(options = {}) {
     [KEYS.insightNotificationHistory]:
       data[KEYS.insightNotificationHistory] || {},
     [KEYS.insightNotificationDaily]: data[KEYS.insightNotificationDaily] || {},
+    [KEYS.behaviorHistory]: pruneBehaviorHistory(
+      data[KEYS.behaviorHistory] || {},
+    ),
   });
   await reconcileSchedules();
   await queueDnrRulesSync({ force: true });
@@ -2739,11 +2950,24 @@ const handlers = {
     await set({ [KEYS.activeBlocks]: next });
     await queueDnrRulesSync();
     await scheduleActiveLimitWakeups(domain);
+    await recordBehaviorEvent({
+      type: "scheduled_block_ended",
+      domain,
+      source: "scheduled",
+    });
     return {
       success: true,
       redirectUrl: redirectUrlForDomain(domain, request, sender),
     };
   },
+  recordBlockedPageView: async (request) => ({
+    success: await recordBehaviorEvent({
+      type: "blocked_page_view",
+      domain: request.domain,
+      source: request.source === "scheduled" ? "scheduled" : "limit",
+      tier: request.tier,
+    }),
+  }),
   snoozeBlock: async (request, sender) => ({
     success: true,
     ...(await snoozeDomain(
@@ -2768,7 +2992,9 @@ const handlers = {
     success: await verifyResetToken(request.token, request.domain),
   }),
   resetDomainLimit: async (request, sender) => ({
-    success: await resetDomainUsage(request.domain),
+    success: await resetDomainUsage(request.domain, {
+      fromBlockedPage: request.fromBlockedPage === true,
+    }),
     redirectUrl: redirectUrlForDomain(request.domain, request, sender),
   }),
   exportUserData: async (request) => ({
@@ -2844,6 +3070,14 @@ chrome.runtime.onMessageExternal?.addListener(
   },
 );
 
+chrome.tabs.onCreated?.addListener((tab) => {
+  const tabId = Number(tab?.id);
+  if (!Number.isFinite(tabId)) return;
+  recentCreatedTabs.set(tabId, Date.now());
+  const domain = domainFromUrl(tab?.url || "");
+  if (domain) tabDomainMemory.set(tabId, domain);
+});
+
 chrome.tabs.onActivated?.addListener(({ tabId }) =>
   setActiveDomain(tabId, true),
 );
@@ -2857,6 +3091,22 @@ chrome.tabs.onUpdated?.addListener((tabId, changeInfo) => {
     .catch(() => {});
 });
 chrome.tabs.onRemoved?.addListener((tabId) => {
+  const numericTabId = Number(tabId);
+  const domain =
+    (Number.isFinite(numericTabId) && tabDomainMemory.get(numericTabId)) ||
+    (tabId === activeTabId ? activeDomain : "");
+  if (isValidDomain(domain)) {
+    recentClosedDomains.set(domain, Date.now());
+    recordBehaviorEvent({
+      type: "tab_closed",
+      domain,
+      tabId: numericTabId,
+    }).catch(() => {});
+  }
+  if (Number.isFinite(numericTabId)) {
+    tabDomainMemory.delete(numericTabId);
+    recentCreatedTabs.delete(numericTabId);
+  }
   if (tabId === activeTabId) {
     clearActiveSession().catch(() => {});
   }
@@ -2990,5 +3240,6 @@ if (typeof module !== "undefined" && module.exports) {
   global.handleActiveLimitWakeup = handleActiveLimitWakeup;
   global.handleActivePageHeartbeat = handleActivePageHeartbeat;
   global.handleWindowFocusChanged = handleWindowFocusChanged;
+  global.recordBehaviorEvent = recordBehaviorEvent;
   global.ACTIVE_LIMIT_BADGE_ALARM = ACTIVE_LIMIT_BADGE_ALARM;
 }

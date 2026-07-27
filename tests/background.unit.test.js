@@ -2311,6 +2311,260 @@ describe("Background helper functions (unit)", () => {
     );
   });
 
+  test("analyzeUsagePatterns detects blocked returns and snooze loops", () => {
+    const now = new Date(2026, 4, 10, 15, 30).getTime();
+    const today = localDayKey(new Date(now));
+    const yesterday = localDayKey(new Date(now - 24 * 60 * 60 * 1000));
+    const behaviorHistory = {
+      [today]: {
+        count: 8,
+        byType: { blocked_page_view: 4, snooze: 4 },
+        byDomain: {
+          "reddit.com": { blocked_page_view: 4, snooze: 2 },
+          "youtube.com": { snooze: 2 },
+        },
+        byHour: {
+          15: { blocked_page_view: 4, snooze: 4 },
+        },
+        events: [
+          { type: "blocked_page_view", domain: "reddit.com", hour: 15, timestamp: now - 20 * 60 * 1000, source: "limit", tier: "standard" },
+          { type: "blocked_page_view", domain: "reddit.com", hour: 15, timestamp: now - 18 * 60 * 1000, source: "limit", tier: "standard" },
+          { type: "blocked_page_view", domain: "reddit.com", hour: 15, timestamp: now - 15 * 60 * 1000, source: "limit", tier: "standard" },
+          { type: "blocked_page_view", domain: "reddit.com", hour: 15, timestamp: now - 12 * 60 * 1000, source: "limit", tier: "standard" },
+          { type: "snooze", domain: "reddit.com", hour: 15, timestamp: now - 10 * 60 * 1000, source: "limit", tier: "standard", minutes: 5 },
+          { type: "snooze", domain: "reddit.com", hour: 15, timestamp: now - 5 * 60 * 1000, source: "limit", tier: "standard", minutes: 15 },
+          { type: "snooze", domain: "youtube.com", hour: 15, timestamp: now - 8 * 60 * 1000, source: "limit", tier: "standard", minutes: 5 },
+          { type: "snooze", domain: "youtube.com", hour: 15, timestamp: now - 3 * 60 * 1000, source: "limit", tier: "standard", minutes: 5 },
+        ],
+      },
+    };
+
+    const insights = analyzeUsagePatterns({
+      now,
+      settings: { personalInsightsEnabled: true, insightSensitivity: "normal" },
+      allStatsToday: {
+        "reddit.com": { timeMs: 6 * 60 * 1000, visits: 1 },
+        "youtube.com": { timeMs: 4 * 60 * 1000, visits: 1 },
+      },
+      statsHistory: {
+        [yesterday]: {
+          "reddit.com": { timeMs: 3 * 60 * 1000, visits: 1 },
+          "youtube.com": { timeMs: 3 * 60 * 1000, visits: 1 },
+        },
+      },
+      hourlyUsageHistory: {},
+      behaviorHistory,
+      blockedDomains: {
+        "reddit.com": { limitSeconds: 60, tier: "standard" },
+        "youtube.com": { limitSeconds: 60, tier: "standard" },
+      },
+    });
+
+    expect(insights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "blocked_return_pattern",
+          domain: "reddit.com",
+        }),
+        expect.objectContaining({
+          type: "snooze_loop",
+          domain: "youtube.com",
+        }),
+      ]),
+    );
+  });
+
+  test("analyzeUsagePatterns detects quick returns and interspersed visits", () => {
+    const now = new Date(2026, 4, 10, 16, 30).getTime();
+    const today = localDayKey(new Date(now));
+    const yesterday = localDayKey(new Date(now - 24 * 60 * 60 * 1000));
+    const events = [
+      { type: "return_after_close", domain: "reddit.com", hour: 16, timestamp: now - 40 * 60 * 1000 },
+      { type: "new_tab_quick_nav", domain: "reddit.com", hour: 16, timestamp: now - 35 * 60 * 1000 },
+      { type: "navigation_visit", domain: "youtube.com", hour: 16, timestamp: now - 30 * 60 * 1000 },
+      { type: "navigation_visit", domain: "docs.google.com", hour: 16, timestamp: now - 28 * 60 * 1000 },
+      { type: "navigation_visit", domain: "youtube.com", hour: 16, timestamp: now - 25 * 60 * 1000 },
+      { type: "navigation_visit", domain: "mail.google.com", hour: 16, timestamp: now - 22 * 60 * 1000 },
+      { type: "navigation_visit", domain: "youtube.com", hour: 16, timestamp: now - 18 * 60 * 1000 },
+      { type: "navigation_visit", domain: "calendar.google.com", hour: 16, timestamp: now - 14 * 60 * 1000 },
+      { type: "navigation_visit", domain: "youtube.com", hour: 16, timestamp: now - 10 * 60 * 1000 },
+    ];
+    const behaviorHistory = {
+      [today]: {
+        count: events.length,
+        byType: {
+          return_after_close: 1,
+          new_tab_quick_nav: 1,
+          navigation_visit: 7,
+        },
+        byDomain: {
+          "reddit.com": { return_after_close: 1, new_tab_quick_nav: 1 },
+          "youtube.com": { navigation_visit: 4 },
+          "docs.google.com": { navigation_visit: 1 },
+          "mail.google.com": { navigation_visit: 1 },
+          "calendar.google.com": { navigation_visit: 1 },
+        },
+        byHour: {
+          16: {
+            return_after_close: 1,
+            new_tab_quick_nav: 1,
+            navigation_visit: 7,
+          },
+        },
+        events,
+      },
+    };
+
+    const insights = analyzeUsagePatterns({
+      now,
+      settings: { personalInsightsEnabled: true, insightSensitivity: "normal" },
+      allStatsToday: {
+        "reddit.com": { timeMs: 4 * 60 * 1000, visits: 2 },
+        "youtube.com": { timeMs: 4 * 60 * 1000, visits: 4 },
+      },
+      statsHistory: {
+        [yesterday]: {
+          "reddit.com": { timeMs: 3 * 60 * 1000, visits: 1 },
+          "youtube.com": { timeMs: 3 * 60 * 1000, visits: 1 },
+        },
+      },
+      hourlyUsageHistory: {},
+      behaviorHistory,
+      blockedDomains: {},
+    });
+
+    expect(insights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "quick_return_pattern",
+          domain: "reddit.com",
+        }),
+        expect.objectContaining({
+          type: "interspersed_visit_pattern",
+          domain: "youtube.com",
+        }),
+      ]),
+    );
+  });
+
+  test("analyzeUsagePatterns detects substitution, baseline, escalation, intervention, and multi-day patterns", () => {
+    const now = new Date(2026, 4, 10, 21, 30).getTime();
+    const today = localDayKey(new Date(now));
+    const dayForOffset = (offset) => {
+      const date = new Date(now);
+      date.setDate(date.getDate() - offset);
+      return localDayKey(date);
+    };
+    const event = (type, domain, minutesAgo, extra = {}) => ({
+      type,
+      domain,
+      hour: new Date(now - minutesAgo * 60 * 1000).getHours(),
+      timestamp: now - minutesAgo * 60 * 1000,
+      ...extra,
+    });
+    const todayEvents = [
+      event("blocked_page_view", "instagram.com", 120, { source: "limit" }),
+      event("navigation_visit", "youtube.com", 118),
+      event("blocked_page_view", "instagram.com", 90, { source: "limit" }),
+      event("navigation_visit", "youtube.com", 88),
+      event("blocked_page_view", "instagram.com", 60, { source: "limit" }),
+      event("navigation_visit", "youtube.com", 58),
+      event("blocked_page_view", "instagram.com", 40, { source: "limit" }),
+      event("blocked_page_view", "instagram.com", 20, { source: "limit" }),
+      event("blocked_page_view", "reddit.com", 80, { source: "limit" }),
+      event("blocked_page_view", "reddit.com", 70, { source: "limit" }),
+      event("blocked_page_view", "reddit.com", 60, { source: "limit" }),
+      event("blocked_page_view", "reddit.com", 50, { source: "limit" }),
+      event("blocked_page_view", "reddit.com", 40, { source: "limit" }),
+      ...Array.from({ length: 20 }, (_, index) =>
+        event("blocked_page_view", "focus.com", 35 - index, { source: "scheduled" }),
+      ),
+      event("blocked_page_view", "tiktok.com", 34, { source: "limit" }),
+      event("blocked_page_view", "tiktok.com", 33, { source: "limit" }),
+      event("blocked_page_view", "tiktok.com", 32, { source: "limit" }),
+      event("blocked_page_view", "tiktok.com", 31, { source: "limit" }),
+    ];
+    const dayEvents = (domain, count, source = "limit") =>
+      Array.from({ length: count }, (_, index) => ({
+        type: "blocked_page_view",
+        domain,
+        hour: 14,
+        timestamp: now - index * 60 * 1000,
+        source,
+      }));
+    const behaviorHistory = {
+      [today]: { events: todayEvents },
+      [dayForOffset(1)]: { events: [...dayEvents("instagram.com", 12), ...dayEvents("tiktok.com", 14)] },
+      [dayForOffset(2)]: { events: [...dayEvents("instagram.com", 11), ...dayEvents("tiktok.com", 13)] },
+      [dayForOffset(3)]: { events: [...dayEvents("instagram.com", 13), ...dayEvents("tiktok.com", 14)] },
+      [dayForOffset(4)]: { events: [...dayEvents("instagram.com", 12), ...dayEvents("tiktok.com", 13)] },
+    };
+
+    const insights = analyzeUsagePatterns({
+      now,
+      settings: { personalInsightsEnabled: true, insightSensitivity: "normal" },
+      allStatsToday: {
+        "instagram.com": { timeMs: 5 * 60 * 1000, visits: 5 },
+        "youtube.com": { timeMs: 4 * 60 * 1000, visits: 3 },
+        "reddit.com": { timeMs: 5 * 60 * 1000, visits: 5 },
+        "focus.com": { timeMs: 3 * 60 * 1000, visits: 1 },
+        "tiktok.com": { timeMs: 4 * 60 * 1000, visits: 4 },
+      },
+      statsHistory: {
+        [dayForOffset(1)]: { "instagram.com": { timeMs: 5 * 60 * 1000, visits: 12 } },
+      },
+      hourlyUsageHistory: {},
+      behaviorHistory,
+      blockedDomains: {},
+    });
+
+    expect(insights).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "substitution_pattern",
+          domain: "youtube.com",
+          context: expect.objectContaining({
+            blockedDomain: "instagram.com",
+            count: 3,
+            windowMinutes: 5,
+          }),
+        }),
+        expect.objectContaining({
+          type: "baseline_improvement",
+          domain: "instagram.com",
+          context: expect.objectContaining({
+            todayCount: 5,
+            usualCount: 12,
+          }),
+        }),
+        expect.objectContaining({
+          type: "late_escalation",
+          domain: "reddit.com",
+          context: expect.objectContaining({
+            count: 5,
+            total: 5,
+            cutoffHour: 20,
+          }),
+        }),
+        expect.objectContaining({
+          type: "intervention_effectiveness",
+          domain: "focus.com",
+          context: expect.objectContaining({
+            scheduledCount: 20,
+          }),
+        }),
+        expect.objectContaining({
+          type: "multi_day_return_leader",
+          domain: "tiktok.com",
+          context: expect.objectContaining({
+            days: 4,
+            windowDays: 5,
+          }),
+        }),
+      ]),
+    );
+  });
+
   test("generateInsights stores insights and caps pattern notifications", async () => {
     const now = new Date(2026, 4, 10, 11, 0).getTime();
     const dayForOffset = (offset) => {

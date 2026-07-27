@@ -1,0 +1,32 @@
+:root {
+  --popup-height: 800px;
+}
+
+html {
+  background: #120a08;
+}
+
+html,
+body {
+  height: var(--popup-height) !important;
+  min-height: var(--popup-height) !important;
+}
+
+body {
+  overflow: hidden;
+  background: #120a08;
+}
+
+.scene {
+  height: var(--popup-height) !important;
+  min-height: var(--popup-height) !important;
+}
+
+.app {
+  min-height: var(--popup-height);
+}
+
+.onboarding-overlay,
+.review-toast {
+  display: none !important;
+}

@@ -4,7 +4,7 @@ const path = require('path');
 
 const WHOP_CHECKOUT_START_URL = 'https://api.saturnfocus.com/whop/start';
 const WHOP_MANAGE_URL = 'https://whop.com/hub/memberships/';
-const CHROME_WEBSTORE_REVIEW_URL = 'https://chromewebstore.google.com/detail/screen-time-manager/pecaajdaecdmikcgfdgldcofdebhfbgo/reviews';
+const CHROME_WEBSTORE_REVIEW_URL = 'https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo/reviews';
 const SURVEYMONKEY_FEEDBACK_URL = 'https://www.surveymonkey.com/r/QF2RJ58';
 
 function popupUrl() {
@@ -317,13 +317,13 @@ test('popup live refresh keeps flushing and repainting visible stats', async ({ 
 
     await page.goto(popupUrl());
     await expect(page.locator('#ranking')).toContainText('alpha.com');
-    await expect(page.locator('#statScreenTimeDelta')).toHaveText('+100%');
+    await expect(page.locator('#todaySubtitle')).toContainText('30m');
 
     await expect.poll(() => page.evaluate(() => window.__popupFlushCount), { timeout: 3500 }).toBeGreaterThanOrEqual(3);
     await expect.poll(() => page.evaluate(() => window.__popupData.statsToday['alpha.com']?.timeMs), { timeout: 3500 })
         .toBeGreaterThanOrEqual((20 * 60 * 1000) + 3000);
-    await expect(page.locator('#statScreenTime')).toContainText('30m');
-    await expect(page.locator('#statScreenTimeDelta')).not.toHaveText('Today');
+    await expect(page.locator('#todaySubtitle')).toContainText('30m');
+    await expect(page.locator('#todaySubtitle')).not.toHaveText('NaN');
 });
 
 test('popup live refresh updates total screen time chip across minute boundaries', async ({ page }) => {
@@ -340,11 +340,11 @@ test('popup live refresh updates total screen time chip across minute boundaries
     });
 
     await page.goto(popupUrl());
-    await expect(page.locator('#statScreenTime')).toContainText('29m');
+    await expect(page.locator('#todaySubtitle')).toContainText('29m');
 
     await expect.poll(() => page.evaluate(() => window.__popupData.statsToday['alpha.com']?.timeMs), { timeout: 3500 })
         .toBeGreaterThanOrEqual(30 * 60 * 1000);
-    await expect(page.locator('#statScreenTime')).toContainText('30m');
+    await expect(page.locator('#todaySubtitle')).toContainText('30m');
 });
 
 test('popup snooze stat handles legacy per-domain history without NaN', async ({ page }) => {
@@ -358,8 +358,8 @@ test('popup snooze stat handles legacy per-domain history without NaN', async ({
     });
 
     await page.goto(popupUrl());
-    await expect(page.locator('#statSnoozes')).toHaveText('3');
-    await expect(page.locator('#statSnoozes')).not.toHaveText('NaN');
+    await expect(page.locator('#todayPauseCount')).toHaveText('3');
+    await expect(page.locator('#todayPauseCount')).not.toHaveText('NaN');
 });
 
 test('selected hourly bar survives live refresh repaint', async ({ page }) => {
@@ -464,7 +464,7 @@ test('popup dashboard actions add limits, end pauses, and switch hourly bars', a
     ))).toBe(true);
     await expect(page.locator('[data-action="clear-snooze"][data-domain="alpha.com"]')).toHaveCount(0);
 
-    const alphaRankingRow = page.locator('#ranking .row', { hasText: 'alpha.com' }).first();
+    const alphaRankingRow = page.locator('#ranking .rank-row', { hasText: 'alpha.com' }).first();
     await alphaRankingRow.hover();
     await alphaRankingRow.locator('[data-action="quick-limit"][data-domain="alpha.com"]').click();
     await expect.poll(() => page.evaluate(() => window.__popupData.blockedDomains['alpha.com']?.limitSeconds)).toBe(1800);
@@ -503,8 +503,8 @@ test('fresh install with no usage history does not show insights', async ({ page
         window.__popupMessages.some((message) => message.action === 'generateInsights')
     ))).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__popupData.personalInsights?.length || 0)).toBe(0);
-    await expect(page.locator('#personalInsightsCard')).toBeVisible();
-    await expect(page.locator('#personalInsightsList')).toContainText("Insights aren't ready yet, check back later.");
+    await expect(page.locator('#todayPullLabel')).toHaveText('Strongest pull');
+    await expect(page.locator('#todayPullCopy')).toContainText('No strong pulls');
 });
 
 test('stored insights are hidden and untracked until enough usage history exists', async ({ page }) => {
@@ -538,8 +538,8 @@ test('stored insights are hidden and untracked until enough usage history exists
     await page.goto(popupUrl());
 
     await expect.poll(() => page.evaluate(() => window.__popupData.personalInsights?.length || 0)).toBe(0);
-    await expect(page.locator('#personalInsightsCard')).toBeVisible();
-    await expect(page.locator('#personalInsightsList')).toContainText("Insights aren't ready yet, check back later.");
+    await expect(page.locator('#todayPullLabel')).toHaveText('Strongest pull');
+    await expect(page.locator('#todayPullCopy')).not.toContainText('holding your attention');
     await expect.poll(() => page.evaluate(() => (
         window.__popupMessages.filter((message) => (
             message.action === 'trackAnalyticsEvent'
@@ -658,34 +658,15 @@ test('journey percentage does not scroll when the displayed value is unchanged',
     await expect(page.locator('#journeyProgressPct')).toHaveAttribute('aria-label', '12%');
 });
 
-test('mock insight data populates real insights and insight Add Limit saves a limit', async ({ page }) => {
+test('mock insight data populates the Today summary insight slot', async ({ page }) => {
     await installPopupChromeMock(page, insightMockUsageData());
 
     await page.goto(popupUrl());
 
-    await expect(page.locator('#personalInsightsCard')).toBeVisible();
-    await expect(page.locator('#personalInsightsNav')).toContainText('1 / 3');
-    await expect(page.locator('#personalInsightsList')).not.toContainText('Preview insight');
-
-    const insightRow = page.locator('#personalInsightsList .insight-row').first();
-    await expect(insightRow).toBeVisible();
-    await expect(insightRow.locator('.insight-stat-headline')).toContainText(/YouTube|Reddit|LinkedIn/);
-    await expect(insightRow.locator('.insight-stat-subheading')).not.toHaveText('');
-
-    const insightDomain = await insightRow.getAttribute('data-domain');
-    await insightRow.locator('[data-action="insight-add-limit"]').click();
-
-    await expect(page.locator('#tab2')).toBeChecked();
-    await expect(page.locator('#domainInput')).toHaveValue(insightDomain);
-    await expect(page.locator('#limitInput')).toHaveValue('30');
-
-    await page.locator('#limitTier').selectOption('strict');
-    await page.locator('#addForm button[type="submit"]').click();
-
-    await expect.poll(() => page.evaluate((domain) => window.__popupData.blockedDomains[domain], insightDomain))
-        .toMatchObject({ enabled: true, limitSeconds: 1800, tier: 'strict' });
-    await expect(page.locator('#addFormMsg')).toContainText('Limit saved.');
-    await expect(page.locator('#limitList')).toContainText(insightDomain);
+    await expect(page.locator('#todayPullLabel')).toContainText(/Pattern insight|Today's progress/);
+    await expect(page.locator('#todayPullCopy')).toContainText(/YouTube|Reddit|LinkedIn|impulses|reclaimed/);
+    await expect(page.locator('#todayPullCopy')).not.toContainText('Preview insight');
+    await expect.poll(() => page.evaluate(() => window.__popupData.personalInsights?.length || 0)).toBeGreaterThan(0);
 });
 
 test('limit list switches and remove buttons work from visible controls', async ({ page }) => {

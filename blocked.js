@@ -237,6 +237,27 @@ async function trackLocalBlockReclaim() {
     }
 }
 
+async function trackLocalBehaviorEvent() {
+    const trackerKey = `saturnBehaviorEvent:${eventId || location.href}`;
+    try {
+        if (sessionStorage.getItem(trackerKey)) return;
+        sessionStorage.setItem(trackerKey, "1");
+    } catch {
+        // Best effort only; local metrics should never affect the block page.
+    }
+
+    try {
+        await chrome.runtime.sendMessage({
+            action: "recordBlockedPageView",
+            domain: d,
+            source: normalizedBlockSource(),
+            tier: normalizedTierName()
+        });
+    } catch {
+        // Best effort only; local metrics should never affect the block page.
+    }
+}
+
 function renderStandardSnoozeButtons(container, increments = [5, 15, 30]) {
     increments.forEach((minutes) => {
         const button = document.createElement("button");
@@ -384,8 +405,10 @@ async function runMemorySequenceChallenge() {
     colors.forEach((col, i) => {
         const btn = document.createElement('button');
         btn.className = 'sequence-button';
+        btn.type = 'button';
         btn.style.background = col;
         btn.dataset.idx = String(i);
+        btn.setAttribute('aria-label', `Sequence color ${i + 1}`);
         btn.disabled = true;
         btn.onclick = () => {
             if (!accepting) return;
@@ -436,6 +459,7 @@ async function runMemorySequenceChallenge() {
         buttons.forEach((btn) => {
             btn.disabled = false;
         });
+        buttons[0]?.focus();
     };
 }
 
@@ -516,6 +540,7 @@ async function runGridMemoryChallenge() {
         btn.className = 'grid-button';
         btn.type = 'button';
         btn.dataset.idx = String(i);
+        btn.setAttribute('aria-label', `Grid square ${i + 1}`);
         btn.addEventListener('click', () => {
             if (!accepting) return;
 
@@ -751,5 +776,6 @@ setDomainText();
 setBadgeText();
 renderTierActions();
 trackBlockedPageView();
+trackLocalBehaviorEvent();
 trackLocalBlockReclaim();
 trackFirstBlockReached();
