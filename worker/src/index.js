@@ -34,6 +34,7 @@ function extensionIdFromOrigin(origin) {
 const ANALYTICS_ALLOWED_EVENTS = new Set([
     "blocked_page_view",
     "blocked_page_action",
+    "post_install_redirect_action",
     "post_install_redirect_shown",
     "post_install_redirect_failed",
     "extension_update",
@@ -44,8 +45,10 @@ const ANALYTICS_ALLOWED_EVENTS = new Set([
     "first_limit_created",
     "first_schedule_created",
     "first_block_reached",
+    "insight_presented",
     "insight_viewed",
     "insight_add_limit_clicked",
+    "preset_applied",
     "upgrade_clicked",
     "domain_added",
     "review_prompt_shown",
@@ -54,14 +57,33 @@ const ANALYTICS_ALLOWED_EVENTS = new Set([
 
 const ANALYTICS_ALLOWED_PARAMS = new Set([
     "action",
+    "activity_day_key",
+    "activity_week_key",
     "block_source",
     "block_tier",
+    "cta_location",
+    "destination",
     "extension_version",
     "install_reason",
+    "is_first_activity_this_week",
+    "is_first_activity_today",
+    "link_domain",
+    "link_text",
+    "link_url",
     "trigger",
     "onboarding_step",
+    "percent_scrolled",
+    "previous_activity_day_key",
     "funnel_version",
-    "error_name"
+    "error_name",
+    "preset_id",
+    "rule_type",
+    "section_id",
+    "section_label",
+    "created_count",
+    "skipped_count",
+    "conflict_count",
+    "capped_count"
 ]);
 
 const ANALYTICS_BLOCK_SOURCES = new Set(["limit", "scheduled", "unknown"]);
@@ -698,40 +720,42 @@ function logAnalyticsDebug(env, message, payload) {
     }
 }
 
-function buildGa4CollectUrl(env) {
-    const measurementId = String(env.GA4_MEASUREMENT_ID || "").trim();
-    const apiSecret = String(env.GA4_API_SECRET || "").trim();
+function buildPostHogCaptureUrl(env) {
+    const apiKey = String(env.POSTHOG_PROJECT_API_KEY || "").trim();
+    const host = String(env.POSTHOG_HOST || "https://us.i.posthog.com").trim().replace(/\/+$/g, "");
 
-    if (!measurementId || !apiSecret) {
+    if (!apiKey || !host) {
         return null;
     }
 
-    const gaUrl = new URL("https://www.google-analytics.com/mp/collect");
-    gaUrl.searchParams.set("measurement_id", measurementId);
-    gaUrl.searchParams.set("api_secret", apiSecret);
-    return gaUrl.toString();
+    return `${host}/i/v0/e/`;
 }
 
-async function sendGa4Event(env, { clientId, eventName, params }) {
-    const gaUrl = buildGa4CollectUrl(env);
-    if (!gaUrl) {
-        return { ok: true, skipped: true, reason: "ga-not-configured" };
+async function sendPostHogEvent(env, { clientId, eventName, params, extensionId }) {
+    const apiKey = String(env.POSTHOG_PROJECT_API_KEY || "").trim();
+    const captureUrl = buildPostHogCaptureUrl(env);
+    if (!apiKey || !captureUrl) {
+        return { ok: true, skipped: true, reason: "posthog-not-configured" };
     }
 
-    const response = await fetch(gaUrl, {
+    const response = await fetch(captureUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            client_id: clientId,
-            events: [{
-                name: eventName,
-                params
-            }]
+            api_key: apiKey,
+            distinct_id: clientId,
+            event: eventName,
+            properties: {
+                "$process_person_profile": false,
+                analytics_source: "saturn_extension",
+                extension_id: extensionId || "unknown",
+                ...params
+            }
         })
     });
 
     if (!response.ok) {
-        throw new Error(`GA4 collect failed (${response.status})`);
+        throw new Error(`PostHog capture failed (${response.status})`);
     }
 
     return { ok: true, skipped: false };
@@ -1259,18 +1283,23 @@ export default {
             eventName: "blocked_page_view",
             clientId,
             params: {
+                activity_day_key: sanitizeAnalyticsText(body?.activity_day_key, "", 32),
+                activity_week_key: sanitizeAnalyticsText(body?.activity_week_key, "", 32),
                 block_source: sanitizeAnalyticsEnum(body?.source, ANALYTICS_BLOCK_SOURCES),
                 block_tier: sanitizeAnalyticsEnum(body?.tier, ANALYTICS_BLOCK_TIERS),
-                extension_version: sanitizeAnalyticsText(body?.extensionVersion, "unknown", 32)
+                extension_version: sanitizeAnalyticsText(body?.extensionVersion, "unknown", 32),
+                is_first_activity_this_week: body?.is_first_activity_this_week ? 1 : 0,
+                is_first_activity_today: body?.is_first_activity_today ? 1 : 0,
+                previous_activity_day_key: sanitizeAnalyticsText(body?.previous_activity_day_key, "", 32)
             }
         };
         logAnalyticsDebug(env, "[analytics/block-event] forwarding", blockEventPayload);
 
-        const result = await sendGa4Event(env, {
+        const result = await sendPostHogEvent(env, {
             clientId,
             eventName: "blocked_page_view",
+            extensionId: analyticsSkip.extensionId,
             params: {
-                engagement_time_msec: 1,
                 ...blockEventPayload.params
             }
         }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }));
@@ -1324,7 +1353,6 @@ export default {
         }
 
         const params = {
-            engagement_time_msec: 1,
             extension_version: sanitizeAnalyticsText(body?.extensionVersion, "unknown", 32),
             ...sanitizeAnalyticsParams(body?.params)
         };
@@ -1334,9 +1362,10 @@ export default {
             params
         });
 
-        const result = await sendGa4Event(env, {
+        const result = await sendPostHogEvent(env, {
             clientId,
             eventName,
+            extensionId: analyticsSkip.extensionId,
             params
         }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }));
 

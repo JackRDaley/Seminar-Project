@@ -11,7 +11,7 @@ Use these custom agents to make Saturn work feel less scattered. Each agent is s
 - `storefront-growth.agent.md`
   - Use for the public website, screenshots, store media, product listing polish, and conversion copy.
 - `analytics-premium.agent.md`
-  - Use for GA4 event tracking, Cloudflare Worker endpoints, Whop handoff, and premium verification flows.
+  - Use for PostHog event tracking, Cloudflare Worker endpoints, Whop handoff, and premium verification flows.
 - `refactor.agent.md`
   - Existing deep-dive agent for reducing `popup.js` and `background.js` complexity.
 

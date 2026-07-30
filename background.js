@@ -89,6 +89,8 @@ const ADMIN_OVERRIDE_KEY = "immutableAdminOverrideEnabled";
 const ADMIN_OVERRIDE_LAST_USED_KEY = "immutableAdminOverrideLastUsedDay";
 const ANALYTICS_EVENT_URL = "https://api.saturnfocus.com/analytics/event";
 const ANALYTICS_PRODUCTION_EXTENSION_ID = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+const ANALYTICS_LAST_ACTIVE_DAY_KEY = "analyticsLastActiveDay";
+const ANALYTICS_LAST_ACTIVE_WEEK_KEY = "analyticsLastActiveWeek";
 const WHOP_VERIFY_URL = "https://api.saturnfocus.com/whop/verify";
 const WHOP_TOKEN_KEY = "whopAccessToken";
 const WHOP_PENDING_TOKEN_KEY = "whopPendingToken";
@@ -124,6 +126,47 @@ const NEW_TAB_NAVIGATION_WINDOW_MS = 45 * 1000;
 
 function shouldSendAnalytics() {
   return chrome.runtime?.id === ANALYTICS_PRODUCTION_EXTENSION_ID;
+}
+
+function analyticsDayKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function analyticsWeekKey(date = new Date()) {
+  const localDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = localDate.getDay() || 7;
+  localDate.setDate(localDate.getDate() + 4 - day);
+  const yearStart = new Date(localDate.getFullYear(), 0, 1);
+  const week = Math.ceil((((localDate - yearStart) / 86400000) + 1) / 7);
+  return `${localDate.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+async function analyticsActivityParams() {
+  const now = new Date();
+  const activityDayKey = analyticsDayKey(now);
+  const activityWeekKey = analyticsWeekKey(now);
+  const data = await chrome.storage.local.get([
+    ANALYTICS_LAST_ACTIVE_DAY_KEY,
+    ANALYTICS_LAST_ACTIVE_WEEK_KEY,
+  ]);
+  const previousActivityDayKey = data[ANALYTICS_LAST_ACTIVE_DAY_KEY] || "";
+  const previousActivityWeekKey = data[ANALYTICS_LAST_ACTIVE_WEEK_KEY] || "";
+
+  await chrome.storage.local.set({
+    [ANALYTICS_LAST_ACTIVE_DAY_KEY]: activityDayKey,
+    [ANALYTICS_LAST_ACTIVE_WEEK_KEY]: activityWeekKey,
+  });
+
+  return {
+    activity_day_key: activityDayKey,
+    activity_week_key: activityWeekKey,
+    previous_activity_day_key: previousActivityDayKey,
+    is_first_activity_today: previousActivityDayKey === activityDayKey ? 0 : 1,
+    is_first_activity_this_week: previousActivityWeekKey === activityWeekKey ? 0 : 1,
+  };
 }
 
 const tokenCaches = {
@@ -2565,6 +2608,7 @@ async function sendAnalyticsEvent(eventName, params = {}) {
 
   try {
     const clientId = await getOrCreateAnalyticsClientId(chrome.storage.local);
+    const activityParams = await analyticsActivityParams();
     await fetch(ANALYTICS_EVENT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2575,7 +2619,10 @@ async function sendAnalyticsEvent(eventName, params = {}) {
           .slice(0, 40),
         extensionId: chrome.runtime?.id || "",
         extensionVersion: chrome.runtime.getManifest?.().version || "unknown",
-        params,
+        params: {
+          ...activityParams,
+          ...params,
+        },
       }),
     });
   } catch {
@@ -2682,6 +2729,13 @@ async function openPostInstallRedirect(details = {}) {
       shownAt: Date.now(),
     },
   });
+
+  if (reason === "update") {
+    await sendAnalyticsEvent("extension_update", {
+      install_reason: reason,
+      extension_version: version,
+    });
+  }
 
   try {
     await chrome.tabs.create({ url, active: true });

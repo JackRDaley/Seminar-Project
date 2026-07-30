@@ -46,6 +46,8 @@ const BLOCK_RECLAIM_STATS_KEY = "saturnBlockReclaimStats";
 const FIRST_BLOCK_REACHED_KEY = "activationFirstBlockReachedAt";
 const BLOCK_ANALYTICS_URL = "https://api.saturnfocus.com/analytics/block-event";
 const ANALYTICS_PRODUCTION_EXTENSION_ID = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+const ANALYTICS_LAST_ACTIVE_DAY_KEY = "analyticsLastActiveDay";
+const ANALYTICS_LAST_ACTIVE_WEEK_KEY = "analyticsLastActiveWeek";
 const RECLAIM_MS_PER_BLOCK = 5 * 60 * 1000;
 const TIER_LABELS = {
     lenient: "Lenient",
@@ -88,6 +90,47 @@ function blockAnalyticsParams() {
 
 function shouldSendAnalytics() {
     return chrome.runtime?.id === ANALYTICS_PRODUCTION_EXTENSION_ID;
+}
+
+function analyticsDayKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
+function analyticsWeekKey(date = new Date()) {
+    const localDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const day = localDate.getDay() || 7;
+    localDate.setDate(localDate.getDate() + 4 - day);
+    const yearStart = new Date(localDate.getFullYear(), 0, 1);
+    const week = Math.ceil((((localDate - yearStart) / 86400000) + 1) / 7);
+    return `${localDate.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+async function analyticsActivityParams() {
+    const now = new Date();
+    const activityDayKey = analyticsDayKey(now);
+    const activityWeekKey = analyticsWeekKey(now);
+    const data = await chrome.storage.local.get([
+        ANALYTICS_LAST_ACTIVE_DAY_KEY,
+        ANALYTICS_LAST_ACTIVE_WEEK_KEY
+    ]);
+    const previousActivityDayKey = data[ANALYTICS_LAST_ACTIVE_DAY_KEY] || "";
+    const previousActivityWeekKey = data[ANALYTICS_LAST_ACTIVE_WEEK_KEY] || "";
+
+    await chrome.storage.local.set({
+        [ANALYTICS_LAST_ACTIVE_DAY_KEY]: activityDayKey,
+        [ANALYTICS_LAST_ACTIVE_WEEK_KEY]: activityWeekKey
+    });
+
+    return {
+        activity_day_key: activityDayKey,
+        activity_week_key: activityWeekKey,
+        previous_activity_day_key: previousActivityDayKey,
+        is_first_activity_today: previousActivityDayKey === activityDayKey ? 0 : 1,
+        is_first_activity_this_week: previousActivityWeekKey === activityWeekKey ? 0 : 1
+    };
 }
 
 function setBadgeText() {
@@ -176,6 +219,7 @@ async function trackBlockedPageView() {
 
     try {
         const clientId = await getOrCreateAnalyticsClientId(chrome.storage.local);
+        const activityParams = await analyticsActivityParams();
         await fetch(BLOCK_ANALYTICS_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -185,7 +229,8 @@ async function trackBlockedPageView() {
                 extensionVersion: chrome.runtime.getManifest?.().version || "unknown",
                 source: normalizedBlockSource(),
                 tier: normalizedTierName(),
-                challengeGame: selectedStrictChallengeGame
+                challengeGame: selectedStrictChallengeGame,
+                ...activityParams
             })
         });
     } catch {

@@ -133,26 +133,27 @@ Vercel provisions the `/_vercel/speed-insights/*` routes on the next deployment.
 
 ---
 
-## Google Analytics Tracking
+## PostHog Extension Analytics
 
-Blocked-page redirects and blocked-page actions can be tracked with GA4 through the Cloudflare Worker.
+Blocked-page redirects and extension actions can be tracked with PostHog through the Cloudflare Worker.
 
 - The extension sends one anonymous event per redirect to `/analytics/block-event`.
-- The extension sends low-cardinality blocked-page actions to `/analytics/event`.
-- The Worker forwards those events to GA4 using the Measurement Protocol.
-- Analytics are sent only from the production Chrome Web Store extension ID; unpacked/internal extension IDs are skipped before they reach GA4.
-- No GA secret is stored in the extension.
+- The extension sends low-cardinality product events to `/analytics/event`.
+- The Worker forwards those events to PostHog's capture endpoint.
+- Analytics are sent only from the production Chrome Web Store extension ID; unpacked/internal extension IDs are skipped before they reach PostHog.
+- No PostHog project key is stored in the extension.
+- Events are sent with `$process_person_profile: false` so PostHog does not create person profiles for anonymous extension installs.
 
 To enable it:
 
-1. Create a GA4 Measurement Protocol API secret in your GA property.
-2. Set the Worker measurement id as an environment variable:
+1. Copy the project API key from your PostHog project.
+2. Set the project key as a Worker secret:
   ```bash
-  wrangler vars set GA4_MEASUREMENT_ID
+  wrangler secret put POSTHOG_PROJECT_API_KEY
   ```
-3. Set the API secret as a Worker secret:
+3. Set the PostHog ingest host. Use `https://us.i.posthog.com` for US Cloud, `https://eu.i.posthog.com` for EU Cloud, or your self-hosted ingest URL:
   ```bash
-  wrangler secret put GA4_API_SECRET
+  wrangler vars set POSTHOG_HOST
   ```
 4. Configure analytics extension ID gates if they differ from the defaults:
   ```bash
@@ -161,10 +162,11 @@ To enable it:
   ```
 5. Deploy the Worker again.
 
-The main emitted GA4 events are:
+The main emitted PostHog events are:
 
 - `blocked_page_view`
 - `blocked_page_action`
+- `post_install_redirect_action`
 - `domain_added`
 - `popup_opened`
 - `onboarding_started`
@@ -173,15 +175,22 @@ The main emitted GA4 events are:
 - `first_limit_created`
 - `first_schedule_created`
 - `first_block_reached`
+- `insight_presented`
 - `insight_viewed`
 - `insight_add_limit_clicked`
+- `preset_applied`
 - `upgrade_clicked`
 - `post_install_redirect_shown`
 - `post_install_redirect_failed`
+- `extension_update`
+- `review_prompt_shown`
+- `review_prompt_action`
 
-Recommended event-scoped custom dimensions:
+Allowed low-cardinality event properties:
 
 - `extension_version`
+- `extension_id`
+- `analytics_source`
 - `block_source` (`limit` or `scheduled`)
 - `block_tier` (`lenient`, `standard`, `strict`, or `immutable`)
 - `action`
@@ -190,10 +199,16 @@ Recommended event-scoped custom dimensions:
 - `onboarding_step`
 - `funnel_version`
 - `error_name`
+- `preset_id`
+- `rule_type`
+- `created_count`
+- `skipped_count`
+- `conflict_count`
+- `capped_count`
 
-Avoid registering unique or high-cardinality values such as redirect IDs, domains, raw URLs, or client IDs as custom dimensions.
+Avoid adding unique or high-cardinality values such as redirect IDs, domains, raw URLs, client IDs, email addresses, or user-entered notes as event properties.
 
-Use GA4's Active Users metric against `blocked_page_view` if you want a rough measure of how many installs are still hitting real blocks.
+Use PostHog trends against `blocked_page_view`, `popup_opened`, and `first_block_reached` if you want a rough view of active installs and activation health.
 
 ---
 

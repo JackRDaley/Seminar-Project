@@ -15,6 +15,7 @@ function bindActions() {
     const openUpdateLogBtn = document.getElementById("openUpdateLogBtn");
 
     openDashboardBtn?.addEventListener("click", async () => {
+        trackWelcomeAction("open_dashboard");
         try {
             if (typeof chrome.action?.openPopup === "function") {
                 await chrome.action.openPopup();
@@ -28,7 +29,7 @@ function bindActions() {
     });
 
     openUpdateLogBtn?.addEventListener("click", () => {
-        const params = new URLSearchParams(window.location.search);
+        trackWelcomeAction("open_changelog");
         const url = new URL("https://saturnfocus.com/changelog");
 
         chrome.tabs.create({
@@ -36,6 +37,14 @@ function bindActions() {
             active: true
         });
     });
+}
+
+function trackWelcomeAction(action) {
+    chrome.runtime.sendMessage({
+        action: "trackAnalyticsEvent",
+        eventName: "post_install_redirect_action",
+        params: { action }
+    }).catch(() => null);
 }
 
 function hydrateHeader() {

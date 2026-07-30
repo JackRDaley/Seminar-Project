@@ -8711,8 +8711,10 @@ body {
 }
 #p1 .chip-button {
   cursor: pointer;
-  font: inherit;
   font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 11px;
   letter-spacing: 0;
 }
 #p1 .chip-button:hover,

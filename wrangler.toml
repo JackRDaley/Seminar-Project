@@ -19,7 +19,7 @@ WHOP_ACTIVE_STATUSES = "active,trialing"
 TOKEN_TTL_DAYS = "7"
 WHOP_EXTENSION_ID = "oflgdecdopjpkpbnncendjoeohoeomnf"
 # WHOP_PLAN_ID is optional. If omitted, the Worker resolves a plan_x... from WHOP_PRODUCT_ID.
-GA4_MEASUREMENT_ID = "G-E0X1Q14TFL"
+POSTHOG_HOST = "https://us.i.posthog.com"
 ANALYTICS_DEBUG_LOGS = "false"
 ANALYTICS_PRODUCTION_EXTENSION_IDS = "pecaajdaecdmikcgfdgldcofdebhfbgo"
 ANALYTICS_INTERNAL_EXTENSION_IDS = "oflgdecdopjpkpbnncendjoeohoeomnf"

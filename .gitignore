@@ -7,12 +7,14 @@ worker/node_modules/
 # Environment / secrets
 .env
 .env.*
+.dev.vars
 !.env.example
 !.dev.vars.example
 worker/.dev.vars
 server/.env
 
 # Wrangler / Cloudflare
+.wrangler/
 worker/.wrangler/
 .tools/
 release/

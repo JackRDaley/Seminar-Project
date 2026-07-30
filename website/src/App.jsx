@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import posthog from "./posthog.js";
 
 const features = [
   {
@@ -120,6 +121,63 @@ const trustItems = [
   "No unnecessary tracking",
   "No selling user data",
 ];
+
+const linkMetadata = (url, fallback = {}) => {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return {
+      destination: fallback.destination || parsed.hostname.replace(/^www\./, ""),
+      link_domain: parsed.hostname.replace(/^www\./, ""),
+      link_url: parsed.toString(),
+    };
+  } catch {
+    return {
+      destination: fallback.destination || "unknown",
+      link_domain: fallback.link_domain || "unknown",
+      link_url: url,
+    };
+  }
+};
+
+const trackOutboundClick = (eventName, url, properties) => {
+  posthog.capture(eventName, {
+    ...linkMetadata(url, properties),
+    ...properties,
+  });
+};
+
+const trackChromeWebStoreClick = (ctaLocation, sectionId = ctaLocation, sectionLabel = "Chrome Web Store CTA") => {
+  trackOutboundClick("chrome_web_store_clicked", storeUrl, {
+    action: "click",
+    cta_location: ctaLocation,
+    destination: "chrome_web_store",
+    link_text: "Add to Chrome",
+    section_id: sectionId,
+    section_label: sectionLabel,
+  });
+};
+
+const trackFeedbackClick = (ctaLocation) => {
+  trackOutboundClick("feedback_clicked", feedbackUrl, {
+    action: "click",
+    cta_location: ctaLocation,
+    destination: "feedback",
+    link_text: "Send feedback",
+    section_id: ctaLocation,
+    section_label: "Feedback",
+  });
+};
+
+const trackProductHuntClick = () => {
+  trackOutboundClick("product_hunt_clicked", productHuntUrl, {
+    action: "click",
+    cta_location: "hero",
+    destination: "product_hunt",
+    link_text: "Product Hunt",
+    section_id: "hero",
+    section_label: "Hero",
+  });
+};
 
 function Icon({ name }) {
   const common = {
@@ -379,7 +437,15 @@ function ProductWalkthrough() {
   };
 
   const selectWalkthrough = (index, options = {}) => {
-    if (options.userInitiated) pauseAutoSwitching();
+    if (options.userInitiated) {
+      pauseAutoSwitching();
+      posthog.capture("walkthrough_screen_selected", {
+        action: "select",
+        section_id: "walkthrough",
+        section_label: "Product walkthrough",
+        screen_name: walkthroughs[index].title,
+      });
+    }
     setActiveIndex(index);
   };
 
@@ -446,7 +512,13 @@ function ProductWalkthrough() {
             </div>
             <span className="nudge-kicker">Live demo</span>
             <h3>Click around. This is a live demo.</h3>
-            <a className="button button-secondary" href={storeUrl} target="_blank" rel="noreferrer">
+            <a
+              className="button button-secondary"
+              href={storeUrl}
+              onClick={() => trackChromeWebStoreClick("walkthrough", "walkthrough", "Product walkthrough")}
+              target="_blank"
+              rel="noreferrer"
+            >
               Add Saturn to Chrome
             </a>
           </aside>
@@ -527,6 +599,37 @@ function JourneySystem() {
 }
 
 export default function App() {
+  useEffect(() => {
+    const thresholds = [25, 50, 75, 90];
+    const seen = new Set();
+
+    const trackScrollDepth = () => {
+      const scrollable =
+        document.documentElement.scrollHeight - window.innerHeight;
+      if (scrollable <= 0) return;
+
+      const percentScrolled = Math.min(
+        100,
+        Math.round((window.scrollY / scrollable) * 100),
+      );
+
+      thresholds.forEach((threshold) => {
+        if (percentScrolled < threshold || seen.has(threshold)) return;
+        seen.add(threshold);
+        posthog.capture("website_scroll_depth", {
+          action: "scroll",
+          percent_scrolled: threshold,
+          section_id: "page",
+          section_label: "Landing page",
+        });
+      });
+    };
+
+    trackScrollDepth();
+    window.addEventListener("scroll", trackScrollDepth, { passive: true });
+    return () => window.removeEventListener("scroll", trackScrollDepth);
+  }, []);
+
   return (
     <main className="prototype-shell">
       <header className="topbar">
@@ -541,7 +644,13 @@ export default function App() {
           <a href="#journey">Journey</a>
           <a href="#faq">FAQ</a>
         </nav>
-        <a className="button button-primary" href={storeUrl} target="_blank" rel="noreferrer">
+        <a
+          className="button button-primary"
+          href={storeUrl}
+          onClick={() => trackChromeWebStoreClick("header", "topbar", "Top navigation")}
+          target="_blank"
+          rel="noreferrer"
+        >
           Add to Chrome
         </a>
       </header>
@@ -554,10 +663,22 @@ export default function App() {
             time goes right from Chrome, with no account required.
           </p>
           <div className="hero-actions">
-            <a className="button button-primary" href={storeUrl} target="_blank" rel="noreferrer">
+            <a
+              className="button button-primary"
+              href={storeUrl}
+              onClick={() => trackChromeWebStoreClick("hero", "hero", "Hero")}
+              target="_blank"
+              rel="noreferrer"
+            >
               Add to Chrome
             </a>
-            <a className="product-hunt-badge" href={productHuntUrl} target="_blank" rel="noreferrer">
+            <a
+              className="product-hunt-badge"
+              href={productHuntUrl}
+              onClick={trackProductHuntClick}
+              target="_blank"
+              rel="noreferrer"
+            >
               <img
                 src={productHuntBadgeUrl}
                 alt="Saturn - Screen Time manager - Understand your browsing habits and stop digital distraction | Product Hunt"
@@ -677,7 +798,13 @@ export default function App() {
         <h2>Start with one distracting site</h2>
         <p>Add Saturn to Chrome, choose the site that pulls you off task most often, and give your next focus session a stronger boundary.</p>
         <div className="cta-actions">
-          <a className="button button-primary" href={storeUrl} target="_blank" rel="noreferrer">
+          <a
+            className="button button-primary"
+            href={storeUrl}
+            onClick={() => trackChromeWebStoreClick("final_cta", "final_cta", "Final CTA")}
+            target="_blank"
+            rel="noreferrer"
+          >
             Add to Chrome
           </a>
           <a className="button button-secondary" href={internalLinks.privacy}>Read privacy policy</a>
@@ -721,7 +848,15 @@ export default function App() {
           <h2>Help shape Saturn</h2>
           <p>Found a bug, want a feature, or have an idea for making the extension better?</p>
         </div>
-        <a className="button button-secondary" href={feedbackUrl} target="_blank" rel="noreferrer">Send feedback</a>
+        <a
+          className="button button-secondary"
+          href={feedbackUrl}
+          onClick={() => trackFeedbackClick("feedback_section")}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Send feedback
+        </a>
       </section>
 
       <footer className="site-footer">
@@ -730,10 +865,24 @@ export default function App() {
           <span>Saturn</span>
         </a>
         <nav aria-label="Footer navigation">
-          <a href={storeUrl} target="_blank" rel="noreferrer">Chrome Web Store</a>
+          <a
+            href={storeUrl}
+            onClick={() => trackChromeWebStoreClick("footer", "footer", "Footer")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Chrome Web Store
+          </a>
           <a href={internalLinks.privacy}>Privacy</a>
           <a href={internalLinks.changelog}>Changelog</a>
-          <a href={feedbackUrl} target="_blank" rel="noreferrer">Feedback</a>
+          <a
+            href={feedbackUrl}
+            onClick={() => trackFeedbackClick("footer")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Feedback
+          </a>
         </nav>
       </footer>
     </main>

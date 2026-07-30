@@ -1,0 +1,36 @@
+{
+  "project_id": 532977,
+  "host": "https://us.posthog.com",
+  "event_properties": [
+    { "name": "action", "description": "Low-cardinality action label for extension and website interactions." },
+    { "name": "activity_day_key", "description": "Local activity day key in YYYY-MM-DD format for extension analytics." },
+    { "name": "activity_week_key", "description": "Local ISO-style activity week key for extension analytics." },
+    { "name": "block_source", "description": "Source of a block event: limit, scheduled, or unknown." },
+    { "name": "block_tier", "description": "Configured block strictness tier." },
+    { "name": "cta_location", "description": "Website CTA placement for conversion clicks." },
+    { "name": "destination", "description": "Normalized destination label for website clicks." },
+    { "name": "error_name", "description": "Low-cardinality error name for failed analytics or redirect events." },
+    { "name": "extension_version", "description": "Saturn extension version that emitted the event." },
+    { "name": "is_first_activity_this_week", "description": "1 when this is the first extension analytics event observed this week for the install, otherwise 0." },
+    { "name": "is_first_activity_today", "description": "1 when this is the first extension analytics event observed today for the install, otherwise 0." },
+    { "name": "funnel_version", "description": "Funnel instrumentation version sent with extension adoption events." },
+    { "name": "install_reason", "description": "Chrome install/update reason for post-install redirect events." },
+    { "name": "link_domain", "description": "Destination domain for public website outbound and CTA clicks." },
+    { "name": "link_text", "description": "Visible link text for public website click events." },
+    { "name": "link_url", "description": "Destination URL for public website click events." },
+    { "name": "onboarding_step", "description": "Step index shown when an onboarding funnel event fires." },
+    { "name": "percent_scrolled", "description": "Scroll-depth threshold reached on the website." },
+    { "name": "preset_id", "description": "Preset template identifier used by preset_applied events." },
+    { "name": "rule_type", "description": "Preset rule category used by preset_applied events." },
+    { "name": "previous_activity_day_key", "description": "Previous local activity day key seen before the current extension analytics event." },
+    { "name": "section_id", "description": "Website section identifier viewed or interacted with." },
+    { "name": "section_label", "description": "Readable website section label for section and FAQ events." },
+    { "name": "trigger", "description": "Low-cardinality trigger/source label for extension events." }
+  ],
+  "intentionally_excluded": [
+    {
+      "name": "raw_extension_domain_or_url",
+      "reason": "Extension analytics deliberately avoids raw domains, raw URLs, redirect IDs, client IDs, emails, and notes. Website link_url is limited to public Saturn outbound CTA destinations."
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 Purpose: Maintain Saturn's analytics, premium handoff, and backend integration paths without leaking sensitive data or breaking production gates.
 
 When to use this agent:
-- You are changing GA4 events, analytics payloads, or event naming.
+- You are changing PostHog events, analytics payloads, or event naming.
 - You are touching Cloudflare Worker routes, Whop checkout, premium verification, or return URLs.
 - You need to audit environment variables or production extension ID gates.
 
@@ -13,7 +13,7 @@ When to use this agent:
 
 Role: Privacy-Conscious Backend and Integration Engineer
 - Keeps analytics low-cardinality and anonymous.
-- Protects secrets by keeping API keys and GA secrets out of extension code.
+- Protects secrets by keeping analytics API keys out of extension code.
 - Designs premium flows that fail safely and explain errors clearly.
 - Treats extension IDs and return URLs as production-sensitive.
 
@@ -27,9 +27,9 @@ Domain: Saturn integrations
 
 ## Privacy Rules
 
-- Do not send raw domains, full URLs, redirect IDs, client IDs, email addresses, or user-entered notes to GA4.
-- Keep GA4 custom dimensions low-cardinality.
-- Gate production analytics by extension ID before forwarding to GA4.
+- Do not send raw domains, full URLs, redirect IDs, client IDs, email addresses, or user-entered notes to PostHog.
+- Keep PostHog event properties low-cardinality.
+- Gate production analytics by extension ID before forwarding to PostHog.
 - Store secrets only in Worker environment variables or secrets, never in extension source.
 - Prefer explicit allowlists for production/internal extension IDs.
 
@@ -60,7 +60,7 @@ Domain: Saturn integrations
 - Request payload, response shape, failure path, and production gating.
 
 3. Check privacy and cardinality
-- Confirm event params are safe for GA4 custom dimensions.
+- Confirm event params are safe, anonymous, and low-cardinality.
 - Remove or bucket high-cardinality values.
 
 4. Harden errors

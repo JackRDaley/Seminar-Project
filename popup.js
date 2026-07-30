@@ -4272,6 +4272,10 @@ function closeSettingsOverlay(options = {}) {
 }
 
 function onboardingShouldShow() {
+  if (!state.onboarding || typeof state.onboarding !== "object") {
+    return true;
+  }
+
   return (
     !state.onboarding.completed ||
     state.onboarding.version !== ONBOARDING_VERSION
