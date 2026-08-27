@@ -20,7 +20,7 @@ const WHOP_ACTIVATION_NOTICE_KEY = "whopActivationNotice";
 const ONBOARDING_KEY = "onboardingState";
 const ONBOARDING_VERSION = 2;
 const FUNNEL_STATE_KEY = "activationFunnelState";
-const FUNNEL_VERSION = 1;
+const FUNNEL_VERSION = 2;
 const WHOP_CHECKOUT_URL =
   "https://whop.com/joined/saturnfocus/products/screen-time-manager-pro/";
 const WHOP_CHECKOUT_START_URL = "https://api.saturnfocus.com/whop/start";
@@ -338,6 +338,9 @@ async function trackFunnelEventOnce(flag, eventName, params = {}) {
     const state = data[FUNNEL_STATE_KEY] || {};
     if (state[normalizedFlag]) return;
 
+    const response = await trackFunnelEvent(eventName, params);
+    if (response?.queued !== true) return response;
+
     await chrome.storage.local.set({
       [FUNNEL_STATE_KEY]: {
         ...state,
@@ -345,7 +348,7 @@ async function trackFunnelEventOnce(flag, eventName, params = {}) {
         version: FUNNEL_VERSION,
       },
     });
-    await trackFunnelEvent(eventName, params);
+    return response;
   } catch {
     // Funnel analytics should never interrupt extension behavior.
   }

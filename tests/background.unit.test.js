@@ -17,6 +17,12 @@ const runtimeMessageListener =
   global.chrome.runtime.onMessage.addListener.mock.calls[0][0];
 const runtimeExternalMessageListener =
   global.chrome.runtime.onMessageExternal.addListener.mock.calls[0][0];
+const defaultStorageGetImplementation =
+  global.chrome.storage.local.get.getMockImplementation();
+const defaultStorageSetImplementation =
+  global.chrome.storage.local.set.getMockImplementation();
+const defaultStorageRemoveImplementation =
+  global.chrome.storage.local.remove.getMockImplementation();
 const {
   createResetToken,
   verifyResetToken,
@@ -37,11 +43,18 @@ const {
   handleActiveLimitWakeup,
   handleActivePageHeartbeat,
   handleWindowFocusChanged,
+  enqueueAnalyticsEvent,
+  flushAnalyticsQueue,
+  sendAnalyticsEvent,
+  ensureAnalyticsMigrationEvent,
+  ensureDailyActiveAnalytics,
   analyzeUsagePatterns,
   generateInsights,
   shouldSendNotification,
   sendPatternNotification,
   ACTIVE_LIMIT_BADGE_ALARM,
+  ANALYTICS_FLUSH_ALARM,
+  ANALYTICS_SCHEMA_VERSION,
 } = global;
 
 function sendBackgroundMessage(request, sender = {}) {
@@ -69,6 +82,316 @@ function localDayKey(date = new Date()) {
 describe("Background helper functions (unit)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    chrome.storage.local.get.mockImplementation(defaultStorageGetImplementation);
+    chrome.storage.local.set.mockImplementation(defaultStorageSetImplementation);
+    chrome.storage.local.remove.mockImplementation(
+      defaultStorageRemoveImplementation,
+    );
+  });
+
+  function useMemoryStorage(initial = {}) {
+    const data = { ...initial };
+    chrome.storage.local.get.mockImplementation(async (keys) => {
+      if (keys == null) return { ...data };
+      const requested = Array.isArray(keys) ? keys : [keys];
+      return Object.fromEntries(requested.map((key) => [key, data[key]]));
+    });
+    chrome.storage.local.set.mockImplementation(async (items) => {
+      Object.assign(data, items);
+    });
+    chrome.storage.local.remove.mockImplementation(async (keys) => {
+      for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key];
+      return true;
+    });
+    return data;
+  }
+
+  test("analytics events persist before delivery and are removed after PostHog accepts them", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ ok: true, skipped: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    try {
+      const queued = await enqueueAnalyticsEvent("blocked_page_view", {
+        block_source: "limit",
+        block_tier: "strict",
+      });
+
+      expect(queued).toEqual(
+        expect.objectContaining({ success: true, queued: true }),
+      );
+      expect(storage.analyticsEventQueue).toHaveLength(1);
+      expect(chrome.alarms.create).toHaveBeenCalledWith(
+        ANALYTICS_FLUSH_ALARM,
+        expect.objectContaining({ delayInMinutes: 1 }),
+      );
+
+      const flushed = await flushAnalyticsQueue();
+      expect(flushed).toEqual(
+        expect.objectContaining({ success: true, delivered: 1, pending: 0 }),
+      );
+      expect(storage.analyticsEventQueue).toEqual([]);
+
+      const request = global.fetch.mock.calls[0];
+      expect(request[0]).toBe("https://api.saturnfocus.com/analytics/event");
+      const payload = JSON.parse(request[1].body);
+      expect(payload).toEqual(
+        expect.objectContaining({
+          eventId: queued.eventId,
+          eventName: "blocked_page_view",
+          extensionId: "pecaajdaecdmikcgfdgldcofdebhfbgo",
+        }),
+      );
+      expect(payload.params).toEqual(
+        expect.objectContaining({
+          block_source: "limit",
+          block_tier: "strict",
+        }),
+      );
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("analytics delivery failures stay queued for the retry alarm", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "temporary failure" }), {
+        status: 502,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    try {
+      await enqueueAnalyticsEvent("popup_opened", { trigger: "browser_action" });
+      const flushed = await flushAnalyticsQueue();
+
+      expect(flushed).toEqual(
+        expect.objectContaining({ success: false, delivered: 0, pending: 1 }),
+      );
+      expect(storage.analyticsEventQueue).toHaveLength(1);
+      expect(chrome.alarms.create).toHaveBeenLastCalledWith(
+        ANALYTICS_FLUSH_ALARM,
+        expect.objectContaining({ delayInMinutes: 1 }),
+      );
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("unpacked builds do not queue production analytics", async () => {
+    const originalId = chrome.runtime.id;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "test-extension-id";
+
+    try {
+      const result = await sendAnalyticsEvent("blocked_page_view", {
+        block_source: "limit",
+      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          queued: false,
+          skipped: true,
+          reason: "non-production-extension-id",
+        }),
+      );
+      expect(storage.analyticsEventQueue).toBeUndefined();
+    } finally {
+      chrome.runtime.id = originalId;
+    }
+  });
+
+  test("a permanently rejected analytics event does not stall later events", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "unsupported-event" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    try {
+      await enqueueAnalyticsEvent("bad_event");
+      await enqueueAnalyticsEvent("popup_opened");
+      const flushed = await flushAnalyticsQueue();
+
+      expect(flushed).toEqual(
+        expect.objectContaining({
+          success: false,
+          delivered: 1,
+          dropped: 1,
+          pending: 0,
+        }),
+      );
+      expect(storage.analyticsEventQueue).toEqual([]);
+      expect(storage.analyticsQueueDiagnostics).toEqual(
+        expect.objectContaining({ permanentlyDropped: 1, delivered: 1 }),
+      );
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("a retryable analytics failure rotates behind events that can deliver", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "temporary failure" }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    try {
+      const deferred = await enqueueAnalyticsEvent("blocked_page_view");
+      await enqueueAnalyticsEvent("popup_opened");
+      const flushed = await flushAnalyticsQueue();
+
+      expect(flushed).toEqual(
+        expect.objectContaining({
+          success: false,
+          delivered: 1,
+          deferred: 1,
+          pending: 1,
+        }),
+      );
+      expect(storage.analyticsEventQueue).toEqual([
+        expect.objectContaining({ id: deferred.eventId, attempts: 1 }),
+      ]);
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("new rollout events survive a temporarily outdated Worker", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage();
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "Unsupported eventName" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    try {
+      const queued = await enqueueAnalyticsEvent("analytics_migration", {
+        analytics_schema_version: ANALYTICS_SCHEMA_VERSION,
+      });
+      const flushed = await flushAnalyticsQueue();
+
+      expect(flushed).toEqual(
+        expect.objectContaining({
+          success: false,
+          deferred: 1,
+          dropped: 0,
+          pending: 1,
+        }),
+      );
+      expect(storage.analyticsEventQueue).toEqual([
+        expect.objectContaining({ id: queued.eventId, attempts: 1 }),
+      ]);
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("migration and daily-active baselines are durable and emitted once", async () => {
+    const originalId = chrome.runtime.id;
+    const originalFetch = global.fetch;
+    const storage = useMemoryStorage({
+      blockedDomains: { "example.com": { enabled: true } },
+      scheduledBlocks: [{ id: "schedule-1", enabled: true }],
+      behaviorHistory: {
+        "2026-08-21": { byType: { blocked_page_view: 2 } },
+      },
+      onboardingState: { completed: true },
+    });
+    chrome.runtime.id = "pecaajdaecdmikcgfdgldcofdebhfbgo";
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    try {
+      const migration = await ensureAnalyticsMigrationEvent("unit_test");
+      const migrationAgain = await ensureAnalyticsMigrationEvent("unit_test");
+      const daily = await ensureDailyActiveAnalytics("unit_test");
+      const dailyAgain = await ensureDailyActiveAnalytics("unit_test");
+      await flushAnalyticsQueue();
+
+      expect(migration).toEqual(expect.objectContaining({ queued: true }));
+      expect(migrationAgain).toEqual(
+        expect.objectContaining({ alreadyRecorded: true }),
+      );
+      expect(daily).toEqual(expect.objectContaining({ queued: true }));
+      expect(dailyAgain).toEqual(
+        expect.objectContaining({ alreadyRecorded: true }),
+      );
+      expect(storage.analyticsSchemaVersion).toBe(ANALYTICS_SCHEMA_VERSION);
+      expect(storage.analyticsDailyActiveDay).toBe(localDayKey());
+
+      const payloads = global.fetch.mock.calls.map((call) =>
+        JSON.parse(call[1].body),
+      );
+      expect(payloads.map((payload) => payload.eventName).sort()).toEqual([
+        "analytics_migration",
+        "extension_active_daily",
+      ]);
+      expect(payloads[0].params).toEqual(
+        expect.objectContaining({
+          analytics_schema_version: ANALYTICS_SCHEMA_VERSION,
+          has_limit: 1,
+          has_schedule: 1,
+          has_block_history: 1,
+          onboarding_complete: 1,
+        }),
+      );
+    } finally {
+      chrome.runtime.id = originalId;
+      global.fetch = originalFetch;
+    }
   });
 
   test("createResetToken and verifyResetToken behave as one-time tokens", async () => {

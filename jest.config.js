@@ -24,5 +24,5 @@ module.exports = {
     transform: {},
     testTimeout: 10000
     ,
-    testPathIgnorePatterns: ['/e2e/']
+    testPathIgnorePatterns: ['/e2e/', '/worker/test/']
 };

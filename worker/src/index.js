@@ -52,7 +52,9 @@ const ANALYTICS_ALLOWED_EVENTS = new Set([
     "upgrade_clicked",
     "domain_added",
     "review_prompt_shown",
-    "review_prompt_action"
+    "review_prompt_action",
+    "analytics_migration",
+    "extension_active_daily"
 ]);
 
 const ANALYTICS_ALLOWED_PARAMS = new Set([
@@ -78,12 +80,18 @@ const ANALYTICS_ALLOWED_PARAMS = new Set([
     "error_name",
     "preset_id",
     "rule_type",
+    "screen_name",
     "section_id",
     "section_label",
     "created_count",
     "skipped_count",
     "conflict_count",
-    "capped_count"
+    "capped_count",
+    "analytics_schema_version",
+    "has_limit",
+    "has_schedule",
+    "has_block_history",
+    "onboarding_complete"
 ]);
 
 const ANALYTICS_BLOCK_SOURCES = new Set(["limit", "scheduled", "unknown"]);
@@ -720,6 +728,14 @@ function logAnalyticsDebug(env, message, payload) {
     }
 }
 
+function logAnalyticsWarning(message, payload = {}) {
+    try {
+        console.warn(message, JSON.stringify(payload));
+    } catch {
+        console.warn(message);
+    }
+}
+
 function buildPostHogCaptureUrl(env) {
     const apiKey = String(env.POSTHOG_PROJECT_API_KEY || "").trim();
     const host = String(env.POSTHOG_HOST || "https://us.i.posthog.com").trim().replace(/\/+$/g, "");
@@ -731,7 +747,7 @@ function buildPostHogCaptureUrl(env) {
     return `${host}/i/v0/e/`;
 }
 
-async function sendPostHogEvent(env, { clientId, eventName, params, extensionId }) {
+async function sendPostHogEvent(env, { clientId, eventId, eventName, params, extensionId }) {
     const apiKey = String(env.POSTHOG_PROJECT_API_KEY || "").trim();
     const captureUrl = buildPostHogCaptureUrl(env);
     if (!apiKey || !captureUrl) {
@@ -747,6 +763,7 @@ async function sendPostHogEvent(env, { clientId, eventName, params, extensionId 
             event: eventName,
             properties: {
                 "$process_person_profile": false,
+                ...(eventId ? { "$insert_id": eventId } : {}),
                 analytics_source: "saturn_extension",
                 extension_id: extensionId || "unknown",
                 ...params
@@ -1246,7 +1263,17 @@ export default {
         }
 
         if (request.method === "GET" && url.pathname === "/health") {
-        return json({ ok: true, service: "whop-verify-worker", now: new Date().toISOString() });
+        return json({
+            ok: true,
+            service: "whop-verify-worker",
+            now: new Date().toISOString(),
+            analytics: {
+                posthogConfigured: Boolean(buildPostHogCaptureUrl(env)),
+                productionExtensionGateConfigured: Boolean(
+                    String(env.ANALYTICS_PRODUCTION_EXTENSION_IDS || DEFAULT_ANALYTICS_PRODUCTION_EXTENSION_ID).trim()
+                )
+            }
+        });
         }
 
         if (request.method === "POST" && url.pathname === "/analytics/block-event") {
@@ -1263,6 +1290,10 @@ export default {
 
         const analyticsSkip = shouldSkipAnalyticsForExtension(env, requestOrigin, body);
         if (analyticsSkip.skip) {
+            logAnalyticsWarning("[analytics/block-event] skipped", {
+                reason: analyticsSkip.reason,
+                extensionId: body?.extensionId || null
+            });
             logAnalyticsDebug(env, "[analytics/block-event] skipped", {
                 reason: analyticsSkip.reason,
                 origin: requestOrigin,
@@ -1278,6 +1309,7 @@ export default {
         if (!clientId) {
             return json({ error: "Missing clientId" }, 400);
         }
+        const eventId = sanitizeAnalyticsText(body?.eventId, "", 128);
 
         const blockEventPayload = {
             eventName: "blocked_page_view",
@@ -1293,10 +1325,15 @@ export default {
                 previous_activity_day_key: sanitizeAnalyticsText(body?.previous_activity_day_key, "", 32)
             }
         };
-        logAnalyticsDebug(env, "[analytics/block-event] forwarding", blockEventPayload);
+        logAnalyticsDebug(env, "[analytics/block-event] forwarding", {
+            eventName: blockEventPayload.eventName,
+            eventId: eventId || null,
+            params: blockEventPayload.params
+        });
 
         const result = await sendPostHogEvent(env, {
             clientId,
+            eventId,
             eventName: "blocked_page_view",
             extensionId: analyticsSkip.extensionId,
             params: {
@@ -1305,7 +1342,17 @@ export default {
         }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }));
 
         if (!result.ok) {
+            logAnalyticsWarning("[analytics/block-event] forwarding failed", {
+                eventName: "blocked_page_view",
+                message: result.error
+            });
             return json({ error: "Analytics forwarding failed", message: result.error }, 502);
+        }
+        if (result.skipped) {
+            logAnalyticsWarning("[analytics/block-event] PostHog skipped", {
+                eventName: "blocked_page_view",
+                reason: result.reason
+            });
         }
 
         return json({ ok: true, skipped: Boolean(result.skipped), reason: result.reason || null }, 200, {
@@ -1328,6 +1375,10 @@ export default {
 
         const analyticsSkip = shouldSkipAnalyticsForExtension(env, requestOrigin, body);
         if (analyticsSkip.skip) {
+            logAnalyticsWarning("[analytics/event] skipped", {
+                reason: analyticsSkip.reason,
+                extensionId: body?.extensionId || null
+            });
             logAnalyticsDebug(env, "[analytics/event] skipped", {
                 reason: analyticsSkip.reason,
                 origin: requestOrigin,
@@ -1343,6 +1394,7 @@ export default {
         if (!clientId) {
             return json({ error: "Missing clientId" }, 400);
         }
+        const eventId = sanitizeAnalyticsText(body?.eventId, "", 128);
 
         const eventName = sanitizeAnalyticsEventName(body?.eventName, "extension_event");
         if (!ANALYTICS_ALLOWED_EVENTS.has(eventName)) {
@@ -1358,19 +1410,30 @@ export default {
         };
         logAnalyticsDebug(env, "[analytics/event] forwarding", {
             eventName,
-            clientId,
+            eventId: eventId || null,
             params
         });
 
         const result = await sendPostHogEvent(env, {
             clientId,
+            eventId,
             eventName,
             extensionId: analyticsSkip.extensionId,
             params
         }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }));
 
         if (!result.ok) {
+            logAnalyticsWarning("[analytics/event] forwarding failed", {
+                eventName,
+                message: result.error
+            });
             return json({ error: "Analytics forwarding failed", message: result.error }, 502);
+        }
+        if (result.skipped) {
+            logAnalyticsWarning("[analytics/event] PostHog skipped", {
+                eventName,
+                reason: result.reason
+            });
         }
 
         return json({ ok: true, skipped: Boolean(result.skipped), reason: result.reason || null, eventName }, 200, {

@@ -31,7 +31,13 @@ const GdprUtils = (() => {
         "analyticsInstallTimestampMs",
         "analyticsLastActiveDay",
         "analyticsLastActiveWeek",
-        "analyticsRetentionMilestones"
+        "analyticsRetentionMilestones",
+        "analyticsEventQueue",
+        "analyticsQueueDiagnostics",
+        "analyticsSchemaVersion",
+        "analyticsDailyActiveDay",
+        "activationFunnelState",
+        "activationFirstBlockReachedAt"
     ]);
 
     const USAGE_KEYS = Object.freeze([
@@ -55,7 +61,13 @@ const GdprUtils = (() => {
         "analyticsInstallTimestampMs",
         "analyticsLastActiveDay",
         "analyticsLastActiveWeek",
-        "analyticsRetentionMilestones"
+        "analyticsRetentionMilestones",
+        "analyticsEventQueue",
+        "analyticsQueueDiagnostics",
+        "analyticsSchemaVersion",
+        "analyticsDailyActiveDay",
+        "activationFunnelState",
+        "activationFirstBlockReachedAt"
     ]);
 
     function storage() {
@@ -117,7 +129,16 @@ const GdprUtils = (() => {
         return {
             totalStorageItems: Object.keys(data || {}).length,
             usageHistory: { present: Boolean(data?.statsHistory || data?.statsToday), canDelete: true },
-            analyticsData: { present: Boolean(data?.analyticsClientId), canDelete: true },
+            analyticsData: {
+                present: Boolean(
+                    data?.analyticsClientId ||
+                    data?.analyticsEventQueue?.length ||
+                    data?.analyticsQueueDiagnostics ||
+                    data?.activationFunnelState ||
+                    data?.activationFirstBlockReachedAt
+                ),
+                canDelete: true
+            },
             allData: { canDelete: true },
             exportFormats: ["JSON", "CSV"]
         };

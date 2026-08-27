@@ -13,12 +13,18 @@ const projectApiKey = process.env.POSTHOG_PROJECT_API_KEY || await readEnvFileVa
 const shouldSeed = !process.argv.includes("--no-seed");
 const shouldDryRun = process.argv.includes("--dry-run");
 const numericPropertyNames = new Set([
+  "analytics_schema_version",
   "created_count",
   "skipped_count",
   "conflict_count",
   "capped_count",
+  "funnel_version",
+  "has_block_history",
+  "has_limit",
+  "has_schedule",
   "is_first_activity_this_week",
   "is_first_activity_today",
+  "onboarding_complete",
   "onboarding_step",
   "percent_scrolled",
 ]);

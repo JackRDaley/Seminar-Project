@@ -266,6 +266,9 @@ async function installPopupChromeMock(page, overrides = {}) {
                         emitStorageChanges({ dismissedInsights, personalInsights });
                         return { success: true, id };
                     }
+                    if (message?.action === 'trackAnalyticsEvent') {
+                        return { success: true, queued: true };
+                    }
                     return { success: true };
                 }
             },
