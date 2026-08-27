@@ -18,6 +18,12 @@ A lightweight Chrome extension that helps users stay focused by tracking time sp
 - Usage Statistics  
   Stores daily usage data including time spent and visit counts per domain.
 
+- Focus Schedules
+  Enforces recurring daily and weekly blocks, including overnight windows.
+
+- Personal Insights
+  Detects repeat visits, snooze loops, substitutions, and changing usage patterns locally.
+
 - Notifications  
   Alerts users when they are close to or have reached their limit.
 
@@ -52,6 +58,7 @@ The repository is split by runtime so generated files and website code do not cr
 |-- e2e/playwright/            # Playwright browser flows
 |-- tools/                     # Local export/media utilities
 |-- worker/                    # Cloudflare Worker project
+|-- server/                    # Legacy local Whop verifier (not the production API)
 `-- website/                   # React/Vite marketing website
 ```
 
@@ -80,11 +87,15 @@ Vercel is configured from the repository root in `vercel.json`:
 Speed Insights is installed with the Vercel script tag in `website/index.html`:
 
 ```html
-<script defer src="/_vercel/speed-insights/script.js"></script>
+<script vite-ignore defer src="/_vercel/speed-insights/script.js"></script>
 ```
 
 After importing the project, enable Speed Insights from the project dashboard so
 Vercel provisions the `/_vercel/speed-insights/*` routes on the next deployment.
+
+Website analytics are loaded as a separate idle-time chunk, keeping PostHog out of
+the initial application bundle. Production security headers are defined in the
+root `vercel.json`.
 
 ---
 
@@ -137,12 +148,14 @@ Vercel provisions the `/_vercel/speed-insights/*` routes on the next deployment.
 
 Blocked-page redirects and extension actions can be tracked with PostHog through the Cloudflare Worker.
 
-- The extension sends one anonymous event per redirect to `/analytics/block-event`.
+- The extension sends one pseudonymous event per redirect to `/analytics/block-event`.
 - The extension sends low-cardinality product events to `/analytics/event`.
 - The Worker forwards those events to PostHog's capture endpoint.
 - Analytics are sent only from the production Chrome Web Store extension ID; unpacked/internal extension IDs are skipped before they reach PostHog.
 - No PostHog project key is stored in the extension.
-- Events are sent with `$process_person_profile: false` so PostHog does not create person profiles for anonymous extension installs.
+- Production extension events create a PostHog profile keyed only by the random `analyticsClientId` stored in `chrome.storage.local`. Profiles contain first/latest extension version, the production extension ID, and the install's event timeline.
+- Profiles do not receive names, email addresses, Whop identifiers, visited domains, full URLs, redirect IDs, or user-entered notes. Reinstalling the extension or clearing its local storage creates a new profile, and profiles are not linked across devices.
+- Website visitors remain anonymous unless the website later implements an explicit account identification flow; `person_profiles: "identified_only"` prevents anonymous marketing-site profiles.
 
 To enable it:
 
@@ -216,13 +229,22 @@ Use PostHog trends against `blocked_page_view`, `popup_opened`, and `first_block
 
 The popup opens `/whop/start` on the Cloudflare Worker instead of linking directly to Whop. The Worker receives the current `chrome.runtime.id`, creates a Whop checkout configuration when `WHOP_PLAN_ID` is set, and uses a return URL that lets the post-payment page message this exact extension install.
 
-Required Worker values:
+Required Worker variables:
 
-- `WHOP_API_KEY`
 - `WHOP_COMPANY_ID`
 - `WHOP_PRODUCT_ID` (`prod_...`) or `WHOP_PLAN_ID` (`plan_...`)
 - `WHOP_CHECKOUT_URL` as a fallback direct checkout link
 - `WHOP_EXTENSION_ID` as a production fallback for Chrome Web Store installs
+
+Required Worker secrets:
+
+- `WHOP_API_KEY`
+- `WHOP_WEBHOOK_SECRET`
+- `JWT_SECRET`
+
+Configure secrets with `wrangler secret put <NAME>`; never place secret values in
+`wrangler.toml`. Webhook delivery is rejected when its secret is absent, stale,
+replayed, or for a different configured company/product.
 
 If only `WHOP_PRODUCT_ID` is configured, the Worker looks up the first non-archived buy-now plan for that product before creating checkout. The Whop API key needs checkout configuration create/read permissions, plan read permission, plus the membership/payment read permissions already used by verification.
 
@@ -269,10 +291,24 @@ if (timeSpent >= limit) {
 
 ## Known Issues / Future Improvements
 
-- Add scheduling (daily or weekly limits)
 - Improve domain management UI
 - Add cross-device sync support
-- Enhance notification system
+- Continue splitting the popup and service worker into smaller feature modules
+
+---
+
+## Automated Checks
+
+```bash
+npm test -- --runInBand --coverage
+npm run test:playwright
+npm --prefix website run build
+npm --prefix worker test
+npm --prefix server test
+```
+
+GitHub Actions runs these checks, dependency audits, and each deployable runtime's
+test/build command on pushes and pull requests.
 
 ---
 

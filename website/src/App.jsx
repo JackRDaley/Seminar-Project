@@ -372,16 +372,20 @@ function FrictionDemo() {
 
 function ProductMockup({ activeIndex, items, onTabChange, onUserInteract }) {
   const frameRef = useRef(null);
+  const demoOrigin = window.location.origin;
 
   const syncDemoTab = () => {
     frameRef.current?.contentWindow?.postMessage(
       { type: "saturn-demo-tab", tabIndex: items[activeIndex].tabIndex },
-      "*",
+      demoOrigin,
     );
   };
 
   const resetAndSyncDemo = () => {
-    frameRef.current?.contentWindow?.postMessage({ type: "saturn-demo-reset" }, "*");
+    frameRef.current?.contentWindow?.postMessage(
+      { type: "saturn-demo-reset" },
+      demoOrigin,
+    );
     syncDemoTab();
   };
 
@@ -391,6 +395,12 @@ function ProductMockup({ activeIndex, items, onTabChange, onUserInteract }) {
 
   useEffect(() => {
     const handleMessage = (event) => {
+      if (
+        event.origin !== demoOrigin ||
+        event.source !== frameRef.current?.contentWindow
+      ) {
+        return;
+      }
       if (event.data?.type === "saturn-demo-ready") {
         syncDemoTab();
         return;
@@ -401,13 +411,15 @@ function ProductMockup({ activeIndex, items, onTabChange, onUserInteract }) {
       }
       if (event.data?.type !== "saturn-demo-tab-selected") return;
 
-      const nextIndex = items.findIndex((item) => item.tabIndex === event.data.tabIndex);
+      const tabIndex = Number(event.data.tabIndex);
+      if (!Number.isInteger(tabIndex)) return;
+      const nextIndex = items.findIndex((item) => item.tabIndex === tabIndex);
       if (nextIndex >= 0) onTabChange(nextIndex, { userInitiated: true });
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [activeIndex, items, onTabChange]);
+  }, [activeIndex, demoOrigin, items, onTabChange, onUserInteract]);
 
   return (
     <div

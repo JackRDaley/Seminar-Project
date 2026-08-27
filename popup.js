@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const Shared = globalThis.StmSharedUtils || {};
+const PatternPauseEngine = globalThis.StmPatternPauses || {};
 const formatTimeSec =
   Shared.formatTimeSec || ((sec) => `${Math.max(0, Math.round(sec || 0))}s`);
 const getDayKey =
@@ -15,6 +16,16 @@ const SETTINGS_KEY = "uiSettings";
 const PERSONAL_INSIGHTS_KEY = "personalInsights";
 const DISMISSED_INSIGHTS_KEY = "dismissedInsights";
 const BEHAVIOR_HISTORY_KEY = "behaviorHistory";
+const PATTERN_PAUSE_RULES_KEY = "patternPauseRules";
+const PATTERN_PAUSE_HISTORY_KEY = "patternPauseHistory";
+const PATTERN_PAUSE_DISMISSALS_KEY = "patternPauseDismissals";
+const PATTERN_PREVIEW_SCENARIOS = Object.freeze([
+  "new-tab",
+  "existing-tab",
+  "single-return",
+  "reopen",
+  "mixed",
+]);
 const PREMIUM_KEY = "premiumState";
 const WHOP_ACTIVATION_NOTICE_KEY = "whopActivationNotice";
 const ONBOARDING_KEY = "onboardingState";
@@ -124,6 +135,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   use24HourTime: false,
   limitNotificationsEnabled: true,
   personalInsightsEnabled: true,
+  patternPausesEnabled: true,
   insightNotificationsEnabled: true,
   insightMaxNotificationsPerDay: 1,
   insightSensitivity: "normal",
@@ -249,6 +261,12 @@ const state = {
   applyingPresetId: null,
   rankingSignature: "",
   journeyVisual: null,
+  patternPauseCandidate: null,
+  patternPauseActiveRule: null,
+  patternPauseDraft: null,
+  patternPauseEditorDomain: "",
+  isDevelopmentBuild: false,
+  patternPreviewScenario: "",
 };
 
 let liveRefreshPromise = null;
@@ -280,6 +298,18 @@ function isValidDomain(domain) {
     .every((part) => part && !part.startsWith("-") && !part.endsWith("-"));
 }
 
+async function detectDevelopmentBuild() {
+  try {
+    const extension = await chrome.management?.getSelf?.();
+    state.isDevelopmentBuild = extension?.installType === "development";
+  } catch {
+    state.isDevelopmentBuild = false;
+  }
+
+  if (!state.isDevelopmentBuild) state.patternPreviewScenario = "";
+  return state.isDevelopmentBuild;
+}
+
 function parseScheduleTimeInput(value) {
   const match = String(value || "")
     .trim()
@@ -289,7 +319,9 @@ function parseScheduleTimeInput(value) {
   let hour = Number(match[1]);
   const minute = Number(match[2] || 0);
   const meridian = match[3]?.toLowerCase();
-  if (minute < 0 || minute > 59 || hour < 0 || hour > 23) return null;
+  if (minute < 0 || minute > 59) return null;
+  if (meridian && (hour < 1 || hour > 12)) return null;
+  if (!meridian && (hour < 0 || hour > 23)) return null;
   if (meridian === "pm" && hour < 12) hour += 12;
   if (meridian === "am" && hour === 12) hour = 0;
 
@@ -1627,16 +1659,29 @@ function buildTodaySummary(range, stats, totalsValue, reclaim, snoozes) {
 function updateDashboardStack() {
   const panel = $("p1");
   const today = document.querySelector("#p1 .today-card");
+  const patternPause = $("patternPauseExperience");
   const journey = document.querySelector("#p1 .journey-card");
-  if (!panel || !today || !journey) return;
+  if (!panel || !today || !patternPause || !journey) return;
 
   const dashboardGap = 10;
   const baseTodayHeight = 290;
-  today.style.height = "auto";
-  const todayHeight = Math.max(baseTodayHeight, Math.ceil(today.scrollHeight));
-  today.style.height = `${todayHeight}px`;
+  const patternPauseVisible =
+    panel.classList.contains("pattern-pause-mode") && !patternPause.hidden;
+  let leadCardHeight = baseTodayHeight;
 
-  const journeyTop = 10 + todayHeight + dashboardGap;
+  if (patternPauseVisible) {
+    patternPause.style.height = "auto";
+    leadCardHeight = Math.max(
+      baseTodayHeight,
+      Math.ceil(patternPause.scrollHeight),
+    );
+  } else {
+    today.style.height = "auto";
+    leadCardHeight = Math.max(baseTodayHeight, Math.ceil(today.scrollHeight));
+    today.style.height = `${leadCardHeight}px`;
+  }
+
+  const journeyTop = 10 + leadCardHeight + dashboardGap;
   journey.style.top = `${journeyTop}px`;
 
   const journeyHeight = panel.classList.contains("is-journey-collapsed")
@@ -1665,6 +1710,462 @@ function updateDashboardStack() {
   ].forEach((card) => {
     if (card) card.style.top = `${usageTop}px`;
   });
+}
+
+function patternPauseDomainLabel(domain) {
+  return PatternPauseEngine.domainLabel?.(domain) || domain || "This site";
+}
+
+const PATTERN_PAUSE_FALLBACK_ICONS = Object.freeze({
+  "instagram.com": "assets/site-icons/instagram.svg",
+  "docs.google.com": "assets/site-icons/docs.svg",
+  "mail.google.com": "assets/site-icons/gmail.svg",
+  "gmail.com": "assets/site-icons/gmail.svg",
+  "notion.so": "assets/site-icons/notion.svg",
+  "reddit.com": "assets/site-icons/reddit.svg",
+  "youtube.com": "assets/site-icons/youtube.svg",
+});
+
+function patternPauseFallbackFaviconUrl(domain) {
+  const normalized = normalizeDomain(domain);
+  const path = PATTERN_PAUSE_FALLBACK_ICONS[normalized];
+  if (!path) return "";
+  try {
+    return chrome.runtime.getURL(path);
+  } catch {
+    return path;
+  }
+}
+
+function patternPauseFaviconUrl(domain, size = 32) {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return "";
+
+  try {
+    const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
+    faviconUrl.searchParams.set("pageUrl", `https://${normalized}/`);
+    faviconUrl.searchParams.set("size", String(size));
+    return faviconUrl.toString();
+  } catch {
+    return patternPauseFallbackFaviconUrl(normalized);
+  }
+}
+
+function patternPauseTime(timestamp) {
+  const value = Number(timestamp || 0);
+  if (!value) return "";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: state.settings.use24HourTime !== true,
+  });
+}
+
+const PATTERN_PAUSE_STEP_ICONS = Object.freeze({
+  "existing-tab": '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.2h9v6.1h-9zM1.5 5h9"></path><path d="m5 7 1.2 1.1L8.7 6"></path></svg>',
+  "new-tab": '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.2h9v6.1h-9zM1.5 5h9M7.5 6.2v2.2M6.4 7.3h2.2"></path></svg>',
+  reopened: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 3.7H1.4V1.6"></path><path d="M1.8 3.7a4.4 4.4 0 1 1-.3 3.8"></path></svg>',
+  switched: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3.5h7M6.8 1.8l1.7 1.7-1.7 1.7M10.5 8.5h-7M5.2 6.8 3.5 8.5l1.7 1.7"></path></svg>',
+});
+
+function patternPauseStepMeta(item = {}) {
+  if (!item.isTarget) {
+    return { key: "switched", label: "switched" };
+  }
+  if (item.afterClose || item.visitOrigin === "after_close") {
+    return { key: "reopened", label: "reopened" };
+  }
+  if (item.fromNewTab || item.visitOrigin === "new_tab") {
+    return { key: "new-tab", label: "new tab" };
+  }
+  return { key: "existing-tab", label: "existing tab" };
+}
+
+function patternPauseTimelineHtml(candidate) {
+  const domain = candidate?.domain || "";
+  const evidence = candidate?.evidence || {};
+  const items = (Array.isArray(evidence.timeline) ? evidence.timeline : [])
+    .slice(-5)
+    .map((item) => ({ ...item }));
+
+  while (items.length < 3) {
+    const offset = (3 - items.length) * 4 * 60 * 1000;
+    items.unshift({
+      domain,
+      timestamp: Number(evidence.firstAt || Date.now()) - offset,
+      isTarget: true,
+      fromNewTab: items.length === 0,
+    });
+  }
+
+  return items
+    .map((item, index) => {
+      const itemDomain = normalizeDomain(item.domain) || domain;
+      const label = patternPauseDomainLabel(itemDomain);
+      const initial = label.charAt(0).toUpperCase() || "S";
+      const previous = items[index - 1];
+      const deltaMinutes = previous
+        ? Math.max(
+            1,
+            Math.round(
+              (Number(item.timestamp || 0) - Number(previous.timestamp || 0)) /
+                60000,
+            ),
+          )
+        : 0;
+      const line = index
+        ? `<span class="pattern-timeline-line" aria-hidden="true"><em>+${deltaMinutes}m</em></span>`
+        : "";
+      const step = patternPauseStepMeta(item);
+      const displayDomain = itemDomain === "mail.google.com" ? "gmail.com" : itemDomain;
+      return `${line}<div class="pattern-site-node${item.isTarget ? " is-target" : ""} is-${step.key}" title="${escapeHtml(`${itemDomain} · ${step.label}`)}">
+          <span class="pattern-site-node-icon" aria-hidden="true">
+            <img src="${escapeHtml(patternPauseFaviconUrl(itemDomain))}" data-pattern-domain="${escapeHtml(itemDomain)}" alt="">
+            <span class="pattern-favicon-fallback">${escapeHtml(initial)}</span>
+          </span>
+          <small>${escapeHtml(displayDomain)}</small>
+          <span class="pattern-site-node-action">${PATTERN_PAUSE_STEP_ICONS[step.key]}<span>${step.label}</span></span>
+          <time>${escapeHtml(patternPauseTime(item.timestamp))}</time>
+        </div>`;
+    })
+    .join("");
+}
+
+function hydratePatternPauseFavicons(timeline) {
+  timeline?.querySelectorAll(".pattern-site-node-icon img").forEach((image) => {
+    const icon = image.closest(".pattern-site-node-icon");
+    const markLoaded = () => icon?.classList.add("has-favicon");
+    const useFallback = () => {
+      const fallback = patternPauseFallbackFaviconUrl(image.dataset.patternDomain);
+      if (fallback && image.src !== fallback) {
+        image.src = fallback;
+        return;
+      }
+      image.remove();
+    };
+    image.addEventListener("load", markLoaded, { once: true });
+    image.addEventListener("error", useFallback, { once: true });
+    if (image.complete) {
+      if (image.naturalWidth > 0) markLoaded();
+      else useFallback();
+    }
+  });
+}
+
+function positionPatternReturnArcs(timeline) {
+  const arcs = $("patternReturnArcs");
+  if (!timeline || !arcs) return;
+  arcs.replaceChildren();
+  const targets = Array.from(
+    timeline.querySelectorAll(".pattern-site-node.is-target .pattern-site-node-icon"),
+  );
+  if (targets.length < 2) return;
+
+  const timelineBox = timeline.getBoundingClientRect();
+  targets.slice(0, -1).forEach((target, index) => {
+    const nextTarget = targets[index + 1];
+    const startBox = target.getBoundingClientRect();
+    const endBox = nextTarget.getBoundingClientRect();
+    const nodeBox = target.closest(".pattern-site-node").getBoundingClientRect();
+    const startCenter = startBox.left - timelineBox.left + startBox.width / 2;
+    const endCenter = endBox.left - timelineBox.left + endBox.width / 2;
+    const arc = document.createElement("span");
+    arc.className = "pattern-return-arc";
+    arc.style.left = `${Math.round(startCenter)}px`;
+    arc.style.top = `${Math.round(nodeBox.bottom - timelineBox.top + 5)}px`;
+    arc.style.width = `${Math.max(1, Math.round(endCenter - startCenter))}px`;
+    arc.appendChild(document.createElement("span"));
+    arcs.appendChild(arc);
+  });
+}
+
+function patternPauseOriginSummary(evidence = {}) {
+  const afterClose = Math.max(
+    0,
+    Number(
+      evidence.afterCloseVisitCount ?? evidence.returnAfterCloseCount ?? 0,
+    ),
+  );
+  const newTab = Math.max(
+    0,
+    Number(evidence.newTabVisitCount ?? evidence.newTabCount ?? 0),
+  );
+  const existingTab = Math.max(
+    0,
+    Number(
+      evidence.existingTabVisitCount ??
+        Number(evidence.visitCount || 0) - newTab - afterClose,
+    ),
+  );
+
+  return [
+    {
+      key: "after-close",
+      count: afterClose,
+      copy: "after closing a tab",
+      priority: 3,
+    },
+    {
+      key: "new-tab",
+      count: newTab,
+      copy: "from a new tab",
+      priority: 2,
+    },
+    {
+      key: "existing-tab",
+      count: existingTab,
+      copy: existingTab === 1 ? "from an existing tab" : "from existing tabs",
+      priority: 1,
+    },
+  ].sort(
+    (left, right) => right.count - left.count || right.priority - left.priority,
+  )[0];
+}
+
+function patternPauseOutcomeRailHtml(summary = {}) {
+  const events = (Array.isArray(summary.events) ? summary.events : [])
+    .filter((event) => ["continued", "closed", "disabled"].includes(event?.type))
+    .slice(-4);
+  if (!events.length) {
+    return '<span class="pattern-outcome-empty">The next check-in will appear here.</span>';
+  }
+
+  return events
+    .map((event, index) => {
+      const labels = {
+        continued: "Continued",
+        closed: "Closed tab",
+        disabled: "Turned off",
+      };
+      const line = index
+        ? '<span class="pattern-outcome-line" aria-hidden="true"></span>'
+        : "";
+      return `${line}<span class="pattern-outcome-event${event.type === "closed" ? " is-closed" : ""}">
+          <time>${escapeHtml(patternPauseTime(event.timestamp))}</time>
+          <strong>${escapeHtml(labels[event.type] || "Check-in")}</strong>
+        </span>`;
+    })
+    .join("");
+}
+
+function patternPreviewIsActive() {
+  return (
+    state.isDevelopmentBuild &&
+    PATTERN_PREVIEW_SCENARIOS.includes(state.patternPreviewScenario)
+  );
+}
+
+function patternPreviewEvents(scenario, now = Date.now()) {
+  const minute = 60 * 1000;
+  const events = [];
+  const visit = (domain, minutesAgo, origin = "existing-tab") => {
+    const timestamp = now - minutesAgo * minute;
+    events.push({ type: "navigation_visit", domain, timestamp });
+    if (origin === "new-tab") {
+      events.push({
+        type: "new_tab_quick_nav",
+        domain,
+        timestamp: timestamp + 350,
+      });
+    }
+    if (origin === "reopen") {
+      events.push({
+        type: "return_after_close",
+        domain,
+        timestamp: timestamp + 350,
+      });
+    }
+  };
+
+  if (scenario === "new-tab") {
+    [24, 19, 14, 9, 5, 1].forEach((minutesAgo) =>
+      visit("youtube.com", minutesAgo, "new-tab"),
+    );
+  } else if (scenario === "existing-tab") {
+    visit("instagram.com", 25);
+    visit("docs.google.com", 21);
+    visit("instagram.com", 17);
+    visit("mail.google.com", 13);
+    visit("instagram.com", 9);
+    visit("notion.so", 5);
+    visit("instagram.com", 2);
+  } else if (scenario === "single-return") {
+    visit("instagram.com", 26);
+    visit("docs.google.com", 23);
+    visit("instagram.com", 20);
+    visit("mail.google.com", 17);
+    visit("notion.so", 14);
+    visit("youtube.com", 11);
+    visit("instagram.com", 8);
+    visit("docs.google.com", 5);
+    visit("instagram.com", 2);
+  } else if (scenario === "reopen") {
+    [18, 9, 2].forEach((minutesAgo) =>
+      visit("reddit.com", minutesAgo, "reopen"),
+    );
+  } else if (scenario === "mixed") {
+    visit("instagram.com", 26, "new-tab");
+    visit("docs.google.com", 22);
+    visit("instagram.com", 18);
+    visit("mail.google.com", 14);
+    visit("instagram.com", 10, "reopen");
+    visit("notion.so", 6);
+    visit("instagram.com", 2, "new-tab");
+  }
+
+  return events;
+}
+
+function buildPatternPreviewCandidate(scenario, now = Date.now()) {
+  if (!PATTERN_PREVIEW_SCENARIOS.includes(scenario)) return null;
+  const events = patternPreviewEvents(scenario, now);
+  const behaviorHistory = {
+    [PatternPauseEngine.getDayKey?.(new Date(now)) || getDayKey(new Date(now))]: {
+      count: events.length,
+      events,
+    },
+  };
+
+  const candidate = PatternPauseEngine.selectPatternPauseCandidate?.({
+    behaviorHistory,
+    now,
+  });
+  return candidate ? { ...candidate, isPreview: true } : null;
+}
+
+function currentPatternPauseCandidate() {
+  if (patternPreviewIsActive()) {
+    return buildPatternPreviewCandidate(state.patternPreviewScenario);
+  }
+  if (state.settings.patternPausesEnabled === false) return null;
+  return (
+    PatternPauseEngine.selectPatternPauseCandidate?.({
+      behaviorHistory: state.data[BEHAVIOR_HISTORY_KEY] || {},
+      insights: state.data[PERSONAL_INSIGHTS_KEY] || [],
+      blockedDomains: state.data.blockedDomains || {},
+      scheduledBlocks: state.data.scheduledBlocks || [],
+      rules: state.data[PATTERN_PAUSE_RULES_KEY] || {},
+      dismissals: state.data[PATTERN_PAUSE_DISMISSALS_KEY] || {},
+      now: Date.now(),
+    }) || null
+  );
+}
+
+function renderPatternPauseExperience() {
+  const panel = $("p1");
+  const experience = $("patternPauseExperience");
+  if (!panel || !experience) return;
+
+  const previewActive = patternPreviewIsActive();
+  const featureEnabled = previewActive || state.settings.patternPausesEnabled !== false;
+  const activeRule = featureEnabled && !previewActive
+    ? PatternPauseEngine.activeRules?.(
+        state.data[PATTERN_PAUSE_RULES_KEY] || {},
+        Date.now(),
+      )?.[0] || null
+    : null;
+  const candidate = activeRule ? null : currentPatternPauseCandidate();
+  state.patternPauseActiveRule = activeRule;
+  state.patternPauseCandidate = candidate;
+
+  const shouldShow = Boolean(activeRule || candidate);
+  panel.dataset.summaryScenario = activeRule
+    ? "pattern-pause-review"
+    : candidate
+      ? previewActive
+        ? `pattern-pause-preview-${state.patternPreviewScenario}`
+        : "pattern-pause"
+      : "daily";
+  panel.classList.toggle("pattern-pause-mode", shouldShow);
+  document.body.classList.toggle("pattern-pause-active", shouldShow);
+  document.body.classList.toggle("pattern-preview-active", previewActive);
+  experience.hidden = !shouldShow;
+  const previewToolbar = $("patternPreviewToolbar");
+  if (previewToolbar) previewToolbar.hidden = !previewActive;
+  const previewSelect = $("patternPreviewScenarioSelect");
+  if (previewSelect && previewActive) {
+    previewSelect.value = state.patternPreviewScenario;
+  }
+  if (!shouldShow) {
+    $("patternReturnArcs")?.replaceChildren();
+    return;
+  }
+
+  const suggestionView = $("patternPauseSuggestionView");
+  const reviewView = $("patternPauseReviewView");
+  suggestionView.hidden = !candidate;
+  reviewView.hidden = !activeRule;
+
+  if (candidate) {
+    const evidence = candidate.evidence || {};
+    const label = patternPauseDomainLabel(candidate.domain);
+    const visits = Math.max(0, Number(evidence.visitCount || 0));
+    const origin = patternPauseOriginSummary(evidence);
+    const originStat = $("patternOriginStat");
+    const timeline = $("patternTimelineTrack");
+    setText("patternVisitCount", `${visits} ${visits === 1 ? "time" : "times"}`);
+    setText(
+      "patternObservedWindow",
+      `${Math.max(1, Number(evidence.observedWindowMinutes || candidate.windowMinutes || 30))} minutes`,
+    );
+    if (originStat) originStat.dataset.patternOrigin = origin.key;
+    setText(
+      "patternOriginCount",
+      `${origin.count} ${origin.count === 1 ? "visit" : "visits"}`,
+    );
+    setText("patternOriginCopy", origin.copy);
+    setText("patternSuggestionHeading", `Add a gentle check-in before ${label}?`);
+    if (timeline) {
+      timeline.innerHTML = patternPauseTimelineHtml(candidate);
+      hydratePatternPauseFavicons(timeline);
+      const timelineShell = timeline.closest(".pattern-timeline");
+      positionPatternReturnArcs(timelineShell);
+      requestAnimationFrame(() => positionPatternReturnArcs(timelineShell));
+    }
+  }
+
+  if (activeRule) {
+    const label = patternPauseDomainLabel(activeRule.domain);
+    const summary = PatternPauseEngine.summarizeRuleHistory?.(
+      state.data[PATTERN_PAUSE_HISTORY_KEY] || {},
+      activeRule,
+    ) || { shown: 0, continued: 0, closed: 0, events: [] };
+    const toggle = $("patternPauseToggle");
+    setText("patternReviewTitle", `${label} pattern pause`);
+    setText(
+      "patternReviewStatus",
+      activeRule.mode === "ongoing"
+        ? "On · Continues until you turn it off"
+        : "On for today · Ends at midnight",
+    );
+    setText("patternShownCount", String(summary.shown || 0));
+    setText("patternContinuedCount", String(summary.continued || 0));
+    setText("patternClosedCount", String(summary.closed || 0));
+    setText(
+      "patternOutcomeCopy",
+      summary.shown
+        ? summary.closed > summary.continued
+          ? "The pause helped create distance more often than it was continued."
+          : "Each check-in stayed optional; these are choices, not failures."
+        : "The pause is ready for the next repeated return.",
+    );
+    setText(
+      "patternTriggerCopy",
+      `After ${activeRule.thresholdVisits} repeated visits within ${activeRule.windowMinutes} minutes`,
+    );
+    const rail = $("patternOutcomeRail");
+    if (rail) rail.innerHTML = patternPauseOutcomeRailHtml(summary);
+    toggle?.classList.toggle("is-on", activeRule.enabled !== false);
+    toggle?.setAttribute("aria-checked", String(activeRule.enabled !== false));
+    const keep = $("keepPatternPauseBtn");
+    if (keep) {
+      keep.disabled = activeRule.mode === "ongoing";
+      keep.lastChild.textContent =
+        activeRule.mode === "ongoing"
+          ? " Kept beyond today"
+          : " Keep this pattern pause";
+    }
+  }
 }
 
 function renderTodaySummary(range, stats, totalsValue, reclaim, snoozes) {
@@ -3201,9 +3702,11 @@ function renderSettings() {
   const use24Hour = $("use24HourTime");
   const limitNotifications = $("limitNotificationsEnabled");
   const personalInsights = $("personalInsightsEnabled");
+  const patternPauses = $("patternPausesEnabled");
   const insightNotifications = $("insightNotificationsEnabled");
   const maxNotifications = $("insightMaxNotificationsPerDay");
   const sensitivity = $("insightSensitivity");
+  const previewCard = $("patternPreviewSettingsCard");
   if (defaultLimit) defaultLimit.value = state.settings.defaultLimitMinutes;
   if (use24Hour) use24Hour.checked = Boolean(state.settings.use24HourTime);
   if (limitNotifications)
@@ -3211,6 +3714,8 @@ function renderSettings() {
       state.settings.limitNotificationsEnabled !== false;
   if (personalInsights)
     personalInsights.checked = state.settings.personalInsightsEnabled !== false;
+  if (patternPauses)
+    patternPauses.checked = state.settings.patternPausesEnabled !== false;
   if (insightNotifications)
     insightNotifications.checked =
       state.settings.insightNotificationsEnabled !== false;
@@ -3225,6 +3730,7 @@ function renderSettings() {
     )
       ? state.settings.insightSensitivity
       : "normal";
+  if (previewCard) previewCard.hidden = !state.isDevelopmentBuild;
   renderImmutableOverride();
 
   setText(
@@ -3278,6 +3784,7 @@ function renderAll(options = {}) {
     renderSchedulesStyled();
     renderStreak();
     renderSettings();
+    renderPatternPauseExperience();
   } finally {
     if (suppressRankingMotion) endRankingMotionSuppressionSoon();
     requestAnimationFrame(updateDashboardStack);
@@ -3313,6 +3820,9 @@ async function loadAll(options = {}) {
     BEHAVIOR_HISTORY_KEY,
     PERSONAL_INSIGHTS_KEY,
     DISMISSED_INSIGHTS_KEY,
+    PATTERN_PAUSE_RULES_KEY,
+    PATTERN_PAUSE_HISTORY_KEY,
+    PATTERN_PAUSE_DISMISSALS_KEY,
     "snoozeHistory",
     "snoozedDomains",
     "recentlyReset",
@@ -3960,6 +4470,9 @@ function settingsFromForm() {
     personalInsightsEnabled: $("personalInsightsEnabled")
       ? Boolean($("personalInsightsEnabled").checked)
       : state.settings.personalInsightsEnabled !== false,
+    patternPausesEnabled: $("patternPausesEnabled")
+      ? Boolean($("patternPausesEnabled").checked)
+      : state.settings.patternPausesEnabled !== false,
     insightNotificationsEnabled: $("insightNotificationsEnabled")
       ? Boolean($("insightNotificationsEnabled").checked)
       : state.settings.insightNotificationsEnabled !== false,
@@ -4261,6 +4774,11 @@ function closeSettingsOverlay(options = {}) {
   overlay.setAttribute("aria-hidden", "true");
   $("settingsCogBtn")?.setAttribute("aria-expanded", "false");
   if (settingsOverlayCloseTimer) window.clearTimeout(settingsOverlayCloseTimer);
+  if (options.immediate === true) {
+    overlay.hidden = true;
+    settingsOverlayCloseTimer = null;
+    return;
+  }
   settingsOverlayCloseTimer = window.setTimeout(() => {
     overlay.hidden = true;
     settingsOverlayCloseTimer = null;
@@ -4269,6 +4787,47 @@ function closeSettingsOverlay(options = {}) {
   if (options.focus !== false) {
     $("settingsCogBtn")?.focus({ preventScroll: true });
   }
+}
+
+function showPatternPreviewScenario(scenario) {
+  if (
+    !state.isDevelopmentBuild ||
+    !PATTERN_PREVIEW_SCENARIOS.includes(scenario)
+  ) {
+    return;
+  }
+
+  state.patternPreviewScenario = scenario;
+  state.patternPauseDraft = null;
+  const feedback = $("patternPauseFeedback");
+  if (feedback) feedback.textContent = "";
+  setActiveTab("tab1");
+  renderPatternPauseExperience();
+  const panel = $("p1");
+  if (panel) panel.scrollTop = 0;
+  requestAnimationFrame(updateDashboardStack);
+}
+
+function launchPatternPreview() {
+  if (!state.isDevelopmentBuild) return;
+  closeSettingsOverlay({ focus: false, immediate: true });
+  showPatternPreviewScenario("mixed");
+  window.setTimeout(() => $("patternPreviewScenarioSelect")?.focus(), 200);
+}
+
+function changePatternPreviewScenario(event) {
+  showPatternPreviewScenario(String(event?.target?.value || ""));
+}
+
+function exitPatternPreview() {
+  if (!patternPreviewIsActive()) return;
+  state.patternPreviewScenario = "";
+  state.patternPauseDraft = null;
+  const feedback = $("patternPauseFeedback");
+  if (feedback) feedback.textContent = "";
+  renderPatternPauseExperience();
+  requestAnimationFrame(updateDashboardStack);
+  window.setTimeout(() => $("settingsCogBtn")?.focus(), 0);
 }
 
 function onboardingShouldShow() {
@@ -4427,6 +4986,204 @@ async function skipOnboarding() {
   await completeOnboarding(true);
 }
 
+function setPatternPauseButtonsDisabled(disabled) {
+  [
+    "enablePatternPauseBtn",
+    "dismissPatternPauseBtn",
+    "adjustPatternPauseBtn",
+    "patternPauseToggle",
+    "keepPatternPauseBtn",
+    "editPatternPauseBtn",
+    "turnOffPatternPauseBtn",
+    "savePatternTriggerBtn",
+  ].forEach((id) => {
+    const button = $(id);
+    if (button) button.disabled = Boolean(disabled);
+  });
+}
+
+function closePatternTriggerEditor() {
+  const overlay = $("patternTriggerOverlay");
+  if (overlay) overlay.hidden = true;
+  state.patternPauseEditorDomain = "";
+}
+
+function openPatternTriggerEditor() {
+  const rule = state.patternPauseActiveRule;
+  const candidate = state.patternPauseCandidate;
+  const domain = rule?.domain || candidate?.domain || "";
+  if (!domain) return;
+
+  const existingDraft =
+    state.patternPauseDraft?.domain === domain ? state.patternPauseDraft : null;
+  const thresholdVisits = Number(
+    existingDraft?.thresholdVisits ||
+      rule?.thresholdVisits ||
+      candidate?.thresholdVisits ||
+      3,
+  );
+  const windowMinutes = Number(
+    existingDraft?.windowMinutes ||
+      rule?.windowMinutes ||
+      candidate?.windowMinutes ||
+      30,
+  );
+  const desired = `${thresholdVisits}:${windowMinutes}`;
+  const options = Array.from(
+    document.querySelectorAll('input[name="patternTrigger"]'),
+  );
+  const selected = options.find((option) => option.value === desired) || options[0];
+  options.forEach((option) => {
+    option.checked = option === selected;
+  });
+  state.patternPauseEditorDomain = domain;
+  setText(
+    "patternTriggerDialogTitle",
+    `When should Saturn pause ${patternPauseDomainLabel(domain)}?`,
+  );
+  const overlay = $("patternTriggerOverlay");
+  if (overlay) overlay.hidden = false;
+  selected?.focus();
+}
+
+async function savePatternTrigger() {
+  const selected = document.querySelector(
+    'input[name="patternTrigger"]:checked',
+  );
+  const domain = state.patternPauseEditorDomain;
+  if (!selected || !domain) return;
+  const [thresholdVisits, windowMinutes] = selected.value
+    .split(":")
+    .map(Number);
+  const active = state.patternPauseActiveRule?.domain === domain;
+
+  if (!active) {
+    state.patternPauseDraft = { domain, thresholdVisits, windowMinutes };
+    closePatternTriggerEditor();
+    setFeedback(
+      "patternPauseFeedback",
+      `Trigger adjusted to ${thresholdVisits} visits in ${windowMinutes} minutes.`,
+    );
+    return;
+  }
+
+  setPatternPauseButtonsDisabled(true);
+  const result = await send("updatePatternPauseRule", {
+    domain,
+    thresholdVisits,
+    windowMinutes,
+  });
+  setPatternPauseButtonsDisabled(false);
+  if (!result?.success) {
+    setFeedback(
+      "patternPauseFeedback",
+      result?.error || "Saturn couldn't update that trigger.",
+      false,
+    );
+    return;
+  }
+  closePatternTriggerEditor();
+  await loadAll();
+  setFeedback("patternPauseFeedback", "Trigger updated.");
+}
+
+async function enablePatternPause() {
+  const candidate = state.patternPauseCandidate;
+  if (!candidate) return;
+  if (patternPreviewIsActive()) {
+    setFeedback(
+      "patternPauseFeedback",
+      "Preview only — no rule was created.",
+    );
+    return;
+  }
+  const draft =
+    state.patternPauseDraft?.domain === candidate.domain
+      ? state.patternPauseDraft
+      : {};
+  setPatternPauseButtonsDisabled(true);
+  setFeedback("patternPauseFeedback", "Turning on your gentle check-in…");
+  const result = await send("enablePatternPause", {
+    domain: candidate.domain,
+    mode: "today",
+    thresholdVisits:
+      draft.thresholdVisits || candidate.thresholdVisits || 3,
+    windowMinutes: draft.windowMinutes || candidate.windowMinutes || 30,
+    sourceInsightType: candidate.sourceInsightType,
+  });
+  setPatternPauseButtonsDisabled(false);
+  if (!result?.success) {
+    setFeedback(
+      "patternPauseFeedback",
+      result?.error || "Saturn couldn't turn on this pause.",
+      false,
+    );
+    return;
+  }
+  state.patternPauseDraft = null;
+  await loadAll();
+  setFeedback("patternPauseFeedback", "Pattern pause is on for today.");
+}
+
+async function dismissPatternPauseSuggestion() {
+  const candidate = state.patternPauseCandidate;
+  if (!candidate) return;
+  if (patternPreviewIsActive()) {
+    setFeedback(
+      "patternPauseFeedback",
+      "Preview kept open so you can compare another scenario.",
+    );
+    return;
+  }
+  setPatternPauseButtonsDisabled(true);
+  const result = await send("dismissPatternPauseSuggestion", {
+    domain: candidate.domain,
+  });
+  setPatternPauseButtonsDisabled(false);
+  if (!result?.success) {
+    setFeedback(
+      "patternPauseFeedback",
+      result?.error || "Saturn couldn't dismiss this suggestion.",
+      false,
+    );
+    return;
+  }
+  state.patternPauseDraft = null;
+  await loadAll();
+}
+
+async function updateActivePatternPause(patch, successMessage) {
+  const rule = state.patternPauseActiveRule;
+  if (!rule) return;
+  setPatternPauseButtonsDisabled(true);
+  const result = await send("updatePatternPauseRule", {
+    domain: rule.domain,
+    ...patch,
+  });
+  setPatternPauseButtonsDisabled(false);
+  if (!result?.success) {
+    setFeedback(
+      "patternPauseFeedback",
+      result?.error || "Saturn couldn't update this pause.",
+      false,
+    );
+    return;
+  }
+  await loadAll();
+  if (successMessage && $("patternPauseExperience")?.hidden === false) {
+    setFeedback("patternPauseFeedback", successMessage);
+  }
+}
+
+async function toggleActivePatternPause() {
+  const rule = state.patternPauseActiveRule;
+  if (!rule) return;
+  await updateActivePatternPause(
+    { enabled: rule.enabled === false },
+    rule.enabled === false ? "Pattern pause is on." : "Pattern pause turned off.",
+  );
+}
+
 function bindDelegatedActions() {
   document.addEventListener("change", async (event) => {
     const origin = event.target;
@@ -4524,9 +5281,19 @@ function bindEvents() {
   $("settingsCloseBtn")?.addEventListener("click", () =>
     closeSettingsOverlay(),
   );
+  $("launchPatternPreviewBtn")?.addEventListener(
+    "click",
+    launchPatternPreview,
+  );
+  $("patternPreviewScenarioSelect")?.addEventListener(
+    "change",
+    changePatternPreviewScenario,
+  );
+  $("exitPatternPreviewBtn")?.addEventListener("click", exitPatternPreview);
   $("use24HourTime")?.addEventListener("change", persistSettings);
   $("limitNotificationsEnabled")?.addEventListener("change", persistSettings);
   $("personalInsightsEnabled")?.addEventListener("change", persistSettings);
+  $("patternPausesEnabled")?.addEventListener("change", persistSettings);
   $("insightNotificationsEnabled")?.addEventListener("change", persistSettings);
   $("insightMaxNotificationsPerDay")?.addEventListener(
     "change",
@@ -4572,6 +5339,44 @@ function bindEvents() {
     if (event.target === event.currentTarget) closePlanetUnlockModal();
   });
   $("linkWhopTokenBtn")?.addEventListener("click", linkWhopToken);
+  $("enablePatternPauseBtn")?.addEventListener("click", enablePatternPause);
+  $("dismissPatternPauseBtn")?.addEventListener(
+    "click",
+    dismissPatternPauseSuggestion,
+  );
+  $("adjustPatternPauseBtn")?.addEventListener(
+    "click",
+    openPatternTriggerEditor,
+  );
+  $("editPatternPauseBtn")?.addEventListener(
+    "click",
+    openPatternTriggerEditor,
+  );
+  $("patternPauseToggle")?.addEventListener(
+    "click",
+    toggleActivePatternPause,
+  );
+  $("keepPatternPauseBtn")?.addEventListener("click", () =>
+    updateActivePatternPause(
+      { mode: "ongoing" },
+      "Pattern pause will continue until you turn it off.",
+    ),
+  );
+  $("turnOffPatternPauseBtn")?.addEventListener("click", () =>
+    updateActivePatternPause({ enabled: false }, "Pattern pause turned off."),
+  );
+  $("savePatternTriggerBtn")?.addEventListener("click", savePatternTrigger);
+  $("closePatternTriggerBtn")?.addEventListener(
+    "click",
+    closePatternTriggerEditor,
+  );
+  $("cancelPatternTriggerBtn")?.addEventListener(
+    "click",
+    closePatternTriggerEditor,
+  );
+  $("patternTriggerOverlay")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closePatternTriggerEditor();
+  });
   $("manualWhopToken")?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
@@ -4599,6 +5404,9 @@ function bindEvents() {
     if (event.key === "Escape" && !$("planetUnlockModal")?.hidden) {
       closePlanetUnlockModal();
     }
+    if (event.key === "Escape" && !$("patternTriggerOverlay")?.hidden) {
+      closePatternTriggerEditor();
+    }
   });
 
   chrome.storage?.onChanged?.addListener((changes, area) => {
@@ -4609,8 +5417,12 @@ function bindEvents() {
       "allStatsToday",
       "statsHistory",
       "hourlyUsageHistory",
+      BEHAVIOR_HISTORY_KEY,
       PERSONAL_INSIGHTS_KEY,
       DISMISSED_INSIGHTS_KEY,
+      PATTERN_PAUSE_RULES_KEY,
+      PATTERN_PAUSE_HISTORY_KEY,
+      PATTERN_PAUSE_DISMISSALS_KEY,
       "snoozedDomains",
       "recentlyReset",
       "activeBlocks",
@@ -4649,6 +5461,7 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   renderScheduleDays();
+  await detectDevelopmentBuild();
   await loadAll({
     flush: true,
     refreshInsights: true,

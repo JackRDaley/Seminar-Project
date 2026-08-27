@@ -56,6 +56,21 @@
         </p>
       </article>
       <article>
+        <h2>Pseudonymous product analytics</h2>
+        <p>
+          Production installs send a limited set of product events to PostHog so Saturn can measure
+          adoption, retention, blocked-page activity, and which extension features are useful. These
+          events are grouped into a profile using a random installation ID stored by the extension.
+          The profile is not linked to a name or email address and is not joined across devices.
+        </p>
+        <p>
+          Analytics payloads exclude visited domains, browsing history, full URLs, Whop identifiers,
+          user-entered notes, and the contents of pages. Reinstalling Saturn or clearing its local
+          storage creates a new installation ID; it does not retroactively delete analytics that
+          PostHog has already received.
+        </p>
+      </article>
+      <article>
         <h2>What it is not for</h2>
         <ul>
           <li>No selling user data.</li>

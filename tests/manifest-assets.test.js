@@ -33,6 +33,7 @@ function htmlAssetReferences(relativePath) {
 describe('Extension packaging references', () => {
   test('manifest references files that exist in the extension bundle', () => {
     const manifest = readJson('manifest.json');
+    expect(manifest.permissions).toContain('favicon');
     const references = [
       ...Object.values(manifest.icons || {}),
       manifest.action?.default_popup,
@@ -47,10 +48,23 @@ describe('Extension packaging references', () => {
   });
 
   test('extension HTML pages reference local assets that exist', () => {
-    for (const htmlFile of ['popup.html', 'blocked.html', 'welcome.html']) {
+    for (const htmlFile of ['popup.html', 'blocked.html', 'pattern-pause.html', 'welcome.html']) {
       for (const reference of htmlAssetReferences(htmlFile)) {
         expectExistingLocalPath(reference, htmlFile);
       }
+    }
+  });
+
+  test('popup favicon fallbacks reference packaged site icons', () => {
+    const popupSource = fs.readFileSync(path.join(rootDir, 'popup.js'), 'utf8');
+    const references = Array.from(
+      popupSource.matchAll(/["'](assets\/site-icons\/[^"']+)["']/g),
+      (match) => match[1]
+    );
+
+    expect(references).toContain('assets/site-icons/reddit.svg');
+    for (const reference of references) {
+      expectExistingLocalPath(reference, 'popup.js');
     }
   });
 });

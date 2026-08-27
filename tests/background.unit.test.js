@@ -37,6 +37,12 @@ const {
   handleActiveLimitWakeup,
   handleActivePageHeartbeat,
   handleWindowFocusChanged,
+  ensureDayReset,
+  updateDomainActivity,
+  reconcileSchedules,
+  parseTime,
+  refreshStoredPremiumStatus,
+  snoozeDomain,
   analyzeUsagePatterns,
   generateInsights,
   shouldSendNotification,
@@ -2874,5 +2880,415 @@ describe("Background helper functions (unit)", () => {
     expect(nextEnd.getDate()).toBe(2);
     expect(nextEnd.getHours()).toBe(2);
     expect(nextEnd.getMinutes()).toBe(0);
+  });
+
+  test("day reset retains recent histories and prunes expired entries", async () => {
+    const now = new Date(2026, 7, 9, 12, 0).getTime();
+    const yesterday = localDayKey(new Date(2026, 7, 8, 12, 0));
+    const oldDay = localDayKey(new Date(2026, 3, 1, 12, 0));
+    const storage = {
+      data: {
+        statsDayKey: yesterday,
+        statsToday: { "example.com": { timeMs: 60000, visits: 1 } },
+        statsHistory: { [oldDay]: { stale: true } },
+        hourlyUsageHistory: { [oldDay]: { "10": { timeMs: 1000 } } },
+        snoozeHistory: { [yesterday]: 2, [oldDay]: 4 },
+        recentlyReset: {
+          "recent.com": now - 1000,
+          "stale.com": now - 6000,
+        },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, structuredClone(this.data[key])]));
+      },
+      async set(items) {
+        Object.assign(this.data, structuredClone(items));
+      },
+    };
+    const original = global.chrome.storage.local;
+    global.chrome.storage.local = storage;
+
+    await ensureDayReset(now);
+
+    expect(storage.data.statsToday).toEqual({});
+    expect(storage.data.statsHistory[yesterday]).toEqual({
+      "example.com": { timeMs: 60000, visits: 1 },
+    });
+    expect(storage.data.statsHistory[oldDay]).toBeUndefined();
+    expect(storage.data.snoozeHistory).toEqual({ [yesterday]: 2 });
+    expect(storage.data.recentlyReset).toEqual({ "recent.com": now - 1000 });
+    global.chrome.storage.local = original;
+  });
+
+  test("concurrent activity updates do not lose elapsed time", async () => {
+    const now = Date.now();
+    const storage = {
+      data: {
+        statsDayKey: localDayKey(new Date(now)),
+        statsToday: {},
+        allStatsToday: {},
+        hourlyUsageHistory: {},
+        statsHistory: {},
+        snoozeHistory: {},
+        recentlyReset: {},
+        blockedDomains: {},
+        snoozedDomains: {},
+        uiSettings: { personalInsightsEnabled: false },
+      },
+      async get(keys) {
+        await Promise.resolve();
+        return Object.fromEntries(keys.map((key) => [key, structuredClone(this.data[key])]));
+      },
+      async set(items) {
+        await Promise.resolve();
+        Object.assign(this.data, structuredClone(items));
+      },
+    };
+    const original = global.chrome.storage.local;
+    global.chrome.storage.local = storage;
+
+    await Promise.all([
+      updateDomainActivity("example.com", {
+        deltaMs: 1000,
+        startMs: now - 2000,
+        endMs: now - 1000,
+      }),
+      updateDomainActivity("example.com", {
+        deltaMs: 1000,
+        startMs: now - 1000,
+        endMs: now,
+      }),
+    ]);
+
+    expect(storage.data.statsToday["example.com"].timeMs).toBe(2000);
+    expect(storage.data.allStatsToday["example.com"].timeMs).toBe(2000);
+    global.chrome.storage.local = original;
+  });
+
+  test("schedule reconciliation preserves active runtime state", async () => {
+    const now = new Date(2026, 7, 3, 12, 0).getTime();
+    const startedAt = now - 20 * 60 * 1000;
+    const block = {
+      id: "schedule-1",
+      domain: "focus.com",
+      startTime: "11:00",
+      endTime: "13:00",
+      days: [new Date(now).getDay()],
+      enabled: true,
+      tier: "standard",
+    };
+    const storage = {
+      data: {
+        scheduledBlocks: [block],
+        activeBlocks: [{ ...block, startedAt, breakMs: 3000 }],
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, structuredClone(this.data[key])]));
+      },
+      async set(items) {
+        Object.assign(this.data, structuredClone(items));
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(now);
+    global.chrome.storage.local = storage;
+
+    await reconcileSchedules();
+
+    expect(storage.data.activeBlocks[0]).toEqual(
+      expect.objectContaining({ startedAt, breakMs: 3000 }),
+    );
+    nowSpy.mockRestore();
+    global.chrome.storage.local = originalStorage;
+  });
+
+  test("premium verification errors retain the last known state and pending token", async () => {
+    const storage = {
+      data: {
+        whopAccessToken: "known-token",
+        whopPendingToken: "pending-token",
+        premiumState: { active: true, planName: "Saturn Premium", checkedAt: 123 },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const originalFetch = global.fetch;
+    global.chrome.storage.local = storage;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 502 }));
+
+    const result = await refreshStoredPremiumStatus("test");
+
+    expect(result).toEqual(expect.objectContaining({ active: true, stale: true }));
+    expect(storage.data.whopAccessToken).toBe("known-token");
+    expect(storage.data.whopPendingToken).toBe("pending-token");
+    global.fetch = originalFetch;
+    global.chrome.storage.local = originalStorage;
+  });
+
+  test("premium state becomes inactive when no entitlement token remains", async () => {
+    const storage = {
+      data: {
+        whopAccessToken: null,
+        whopPendingToken: null,
+        premiumState: { active: true, planName: "Saturn Premium" },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const original = global.chrome.storage.local;
+    global.chrome.storage.local = storage;
+
+    const result = await refreshStoredPremiumStatus("test");
+
+    expect(result).toEqual(expect.objectContaining({ active: false, planName: "Free" }));
+    expect(storage.data.premiumState.active).toBe(false);
+    global.chrome.storage.local = original;
+  });
+
+  test("time parsing and snooze duration validation reject ambiguous input", async () => {
+    expect(parseTime("13 PM")).toBeNull();
+    expect(parseTime("0 PM")).toBeNull();
+    expect(parseTime("12:30 AM")).toEqual({ hour: 0, minute: 30 });
+    await expect(snoozeDomain("example.com", Infinity)).rejects.toThrow(
+      "between 1 and 60 minutes",
+    );
+  });
+
+  test("disabling immutable override does not reset its daily use record", async () => {
+    const storage = {
+      data: {
+        immutableAdminOverrideEnabled: true,
+        immutableAdminOverrideLastUsedDay: "2026-08-09",
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const original = global.chrome.storage.local;
+    global.chrome.storage.local = storage;
+
+    const response = await sendBackgroundMessage({
+      action: "setImmutableAdminOverride",
+      enabled: false,
+    });
+
+    expect(response.success).toBe(true);
+    expect(storage.data.immutableAdminOverrideLastUsedDay).toBe("2026-08-09");
+    global.chrome.storage.local = original;
+  });
+
+  test("insight generation loads behavior history", async () => {
+    const today = localDayKey();
+    const storage = {
+      data: {
+        statsDayKey: today,
+        statsToday: {},
+        statsHistory: {},
+        hourlyUsageHistory: {},
+        snoozeHistory: {},
+        recentlyReset: {},
+        behaviorHistory: { [today]: { count: 1, events: [] } },
+        uiSettings: { personalInsightsEnabled: false },
+      },
+      get: jest.fn(async function (keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      }),
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const original = global.chrome.storage.local;
+    global.chrome.storage.local = storage;
+
+    await generateInsights({ now: Date.now(), allowNotifications: false });
+
+    expect(
+      storage.get.mock.calls.some(([keys]) => keys.includes("behaviorHistory")),
+    ).toBe(true);
+    global.chrome.storage.local = original;
+  });
+
+  test("pattern pauses redirect only after scheduled and hard-limit checks pass", async () => {
+    const now = Date.now();
+    const today = localDayKey(new Date(now));
+    const rule = {
+      id: "pattern:instagram.com",
+      domain: "instagram.com",
+      enabled: true,
+      mode: "ongoing",
+      createdAt: now - 60000,
+      updatedAt: now - 60000,
+      thresholdVisits: 3,
+      windowMinutes: 30,
+      minSignals: 1,
+      cooldownMinutes: 5,
+      bypassMinutes: 10,
+      lastTriggeredAt: 0,
+    };
+    const events = [
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 900000 },
+      { type: "new_tab_quick_nav", domain: "instagram.com", timestamp: now - 899500 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 480000 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 60000 },
+    ];
+    const storage = {
+      data: {
+        activeBlocks: [],
+        blockedDomains: {},
+        statsToday: {},
+        snoozedDomains: {},
+        recentlyReset: {},
+        behaviorHistory: { [today]: { count: events.length, events } },
+        patternPauseRules: { "instagram.com": rule },
+        patternPauseHistory: { events: [], byRule: {} },
+        patternPauseBypasses: {},
+        uiSettings: { patternPausesEnabled: true, personalInsightsEnabled: false },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const originalGet = global.chrome.tabs.get;
+    const originalUpdate = global.chrome.tabs.update;
+    global.chrome.storage.local = storage;
+    global.chrome.tabs.get = jest.fn(async () => ({
+      id: 41,
+      url: "https://instagram.com/reels/abc",
+    }));
+    global.chrome.tabs.update = jest.fn(async () => ({}));
+
+    expect(await enforceIfNeeded(41)).toBe(true);
+    expect(global.chrome.tabs.update).toHaveBeenCalledWith(
+      41,
+      expect.objectContaining({ url: expect.stringContaining("pattern-pause.html?") }),
+    );
+    expect(global.chrome.tabs.update.mock.calls[0][1].url).toContain(
+      "u=https%3A%2F%2Finstagram.com%2Freels%2Fabc",
+    );
+    expect(storage.data.patternPauseHistory.byRule[rule.id].shown).toBe(1);
+
+    storage.data.blockedDomains = {
+      "instagram.com": { enabled: true, limitSeconds: 60, tier: "standard" },
+    };
+    storage.data.statsToday = {
+      "instagram.com": { timeMs: 60000, visits: 3 },
+    };
+    global.chrome.tabs.update.mockClear();
+
+    expect(await enforceIfNeeded(41)).toBe(true);
+    expect(global.chrome.tabs.update.mock.calls[0][1].url).toContain(
+      "blocked.html?",
+    );
+    expect(global.chrome.tabs.update.mock.calls[0][1].url).not.toContain(
+      "pattern-pause.html",
+    );
+
+    global.chrome.storage.local = originalStorage;
+    global.chrome.tabs.get = originalGet;
+    global.chrome.tabs.update = originalUpdate;
+  });
+
+  test("continuing grants a same-tab bypass without changing the rule", async () => {
+    const now = Date.now();
+    const today = localDayKey(new Date(now));
+    const rule = {
+      id: "pattern:instagram.com",
+      domain: "instagram.com",
+      enabled: true,
+      mode: "ongoing",
+      createdAt: now - 60000,
+      updatedAt: now - 60000,
+      thresholdVisits: 3,
+      windowMinutes: 30,
+      minSignals: 1,
+      cooldownMinutes: 5,
+      bypassMinutes: 10,
+      lastTriggeredAt: 0,
+    };
+    const events = [
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 900000 },
+      { type: "new_tab_quick_nav", domain: "instagram.com", timestamp: now - 899500 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 480000 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 60000 },
+    ];
+    const storage = {
+      data: {
+        activeBlocks: [],
+        blockedDomains: {},
+        statsToday: {},
+        snoozedDomains: {},
+        recentlyReset: {},
+        behaviorHistory: { [today]: { count: events.length, events } },
+        patternPauseRules: { "instagram.com": rule },
+        patternPauseHistory: { events: [], byRule: {} },
+        patternPauseBypasses: {},
+        uiSettings: { patternPausesEnabled: true, personalInsightsEnabled: false },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const originalGet = global.chrome.tabs.get;
+    const originalUpdate = global.chrome.tabs.update;
+    global.chrome.storage.local = storage;
+
+    const response = await sendBackgroundMessage(
+      {
+        action: "continuePatternPause",
+        domain: "instagram.com",
+        ruleId: rule.id,
+        original: "https://instagram.com/reels/abc",
+      },
+      {
+        tab: {
+          id: 42,
+          url: "chrome-extension://test-id/pattern-pause.html?d=instagram.com",
+        },
+      },
+    );
+
+    expect(response).toEqual(
+      expect.objectContaining({
+        success: true,
+        redirectUrl: "https://instagram.com/reels/abc",
+      }),
+    );
+    expect(storage.data.patternPauseBypasses["42"]).toEqual(
+      expect.objectContaining({ domain: "instagram.com", tabId: 42 }),
+    );
+    expect(storage.data.patternPauseRules["instagram.com"].enabled).toBe(true);
+    expect(storage.data.patternPauseHistory.byRule[rule.id].continued).toBe(1);
+
+    global.chrome.tabs.get = jest.fn(async () => ({
+      id: 42,
+      url: "https://instagram.com/reels/abc",
+    }));
+    global.chrome.tabs.update = jest.fn(async () => ({}));
+    expect(await enforceIfNeeded(42)).toBe(false);
+    expect(global.chrome.tabs.update).not.toHaveBeenCalled();
+
+    global.chrome.storage.local = originalStorage;
+    global.chrome.tabs.get = originalGet;
+    global.chrome.tabs.update = originalUpdate;
   });
 });

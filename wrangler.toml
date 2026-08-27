@@ -16,6 +16,7 @@ WHOP_CHECKOUT_URL = "https://whop.com/joined/saturnfocus/products/screen-time-ma
 WHOP_PRODUCT_ID = "prod_1bS0uOo82g327"
 WHOP_COMPANY_ID = "biz_EE8NPUFwUpVWma"
 WHOP_ACTIVE_STATUSES = "active,trialing"
+WHOP_WEBHOOK_TOLERANCE_SECONDS = "300"
 TOKEN_TTL_DAYS = "7"
 WHOP_EXTENSION_ID = "oflgdecdopjpkpbnncendjoeohoeomnf"
 # WHOP_PLAN_ID is optional. If omitted, the Worker resolves a plan_x... from WHOP_PRODUCT_ID.
@@ -23,6 +24,9 @@ POSTHOG_HOST = "https://us.i.posthog.com"
 ANALYTICS_DEBUG_LOGS = "false"
 ANALYTICS_PRODUCTION_EXTENSION_IDS = "pecaajdaecdmikcgfdgldcofdebhfbgo"
 ANALYTICS_INTERNAL_EXTENSION_IDS = "oflgdecdopjpkpbnncendjoeohoeomnf"
+
+# Required secrets (set with `wrangler secret put`, never commit their values):
+# WHOP_API_KEY, WHOP_WEBHOOK_SECRET, JWT_SECRET, POSTHOG_PROJECT_API_KEY
 
 [[kv_namespaces]]
 binding = "PREMIUM_STATUS"

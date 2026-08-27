@@ -1,6 +1,7 @@
 importScripts("shared-extension-utils.js");
 importScripts("gdpr-utils.js");
 importScripts("insights.js");
+importScripts("pattern-pauses.js");
 
 const { formatTimeSec, getDayKey, getOrCreateAnalyticsClientId } =
   globalThis.StmSharedUtils || {};
@@ -31,6 +32,7 @@ const analyzeUsagePatterns =
   typeof InsightEngine.analyzeUsagePatterns === "function"
     ? InsightEngine.analyzeUsagePatterns
     : () => [];
+const PatternPauseEngine = globalThis.StmPatternPauses || {};
 
 function normalizeDomain(input) {
   const raw = String(input || "")
@@ -67,6 +69,10 @@ const KEYS = Object.freeze({
   snoozedDomains: "snoozedDomains",
   snoozeHistory: "snoozeHistory",
   behaviorHistory: "behaviorHistory",
+  patternPauseRules: "patternPauseRules",
+  patternPauseHistory: "patternPauseHistory",
+  patternPauseDismissals: "patternPauseDismissals",
+  patternPauseBypasses: "patternPauseBypasses",
   statsHistory: "statsHistory",
   recentlyReset: "recentlyReset",
   activeSession: "activeSession",
@@ -121,8 +127,10 @@ const INSIGHT_MAX_STORED = 24;
 const DISMISSED_INSIGHT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const BEHAVIOR_HISTORY_RETENTION_DAYS = 30;
 const BEHAVIOR_HISTORY_MAX_EVENTS_PER_DAY = 200;
+const DAY_KEYED_HISTORY_RETENTION_DAYS = 90;
 const RECENT_TAB_CLOSE_RETURN_MS = 2 * 60 * 1000;
 const NEW_TAB_NAVIGATION_WINDOW_MS = 45 * 1000;
+const PATTERN_PAUSE_HISTORY_MAX_EVENTS = 300;
 
 function shouldSendAnalytics() {
   return chrome.runtime?.id === ANALYTICS_PRODUCTION_EXTENSION_ID;
@@ -193,6 +201,7 @@ let dnrRulesStateKey = "";
 let dnrRulesSyncPromise = null;
 let dnrRulesSyncQueued = false;
 let dnrRulesSyncForceQueued = false;
+let storageMutationQueue = Promise.resolve();
 
 async function get(keys) {
   return chrome.storage.local.get(keys);
@@ -200,6 +209,12 @@ async function get(keys) {
 
 async function set(items) {
   return chrome.storage.local.set(items);
+}
+
+function serializeStorageMutation(task) {
+  const operation = storageMutationQueue.then(task, task);
+  storageMutationQueue = operation.catch(() => {});
+  return operation;
 }
 
 function randomToken(prefix) {
@@ -383,6 +398,18 @@ function blockedUrl(
   });
   if (originalUrl) params.set("u", originalUrl);
   return chrome.runtime.getURL(`blocked.html?${params.toString()}`);
+}
+
+function patternPauseUrl(domain, rule = {}, originalUrl = "") {
+  const normalized = normalizeDomain(domain);
+  const params = new URLSearchParams({
+    d: normalized,
+    rid: String(rule.id || `pattern:${normalized}`),
+    eid: randomToken("pattern-pause"),
+  });
+  const safeOriginal = safeOriginalUrlForDomain(normalized, originalUrl);
+  if (safeOriginal) params.set("u", safeOriginal);
+  return chrome.runtime.getURL(`pattern-pause.html?${params.toString()}`);
 }
 
 function blockedPageInfoFromUrl(url) {
@@ -951,26 +978,98 @@ function addHourlyUsage(history, domain, startMs, endMs, countVisit = false) {
   return history;
 }
 
-async function ensureDayReset(now = Date.now()) {
-  const today = getDayKey(new Date(now));
-  const data = await get([KEYS.dayKey, KEYS.statsToday, KEYS.statsHistory]);
-  if (!data[KEYS.dayKey]) {
-    await set({ [KEYS.dayKey]: today });
-    return;
-  }
-  if (data[KEYS.dayKey] === today) return;
+function pruneDayKeyedHistory(
+  history = {},
+  now = Date.now(),
+  retentionDays = DAY_KEYED_HISTORY_RETENTION_DAYS,
+) {
+  const kept = {};
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - (retentionDays - 1));
+  cutoff.setHours(0, 0, 0, 0);
 
-  const history = data[KEYS.statsHistory] || {};
-  history[data[KEYS.dayKey]] = data[KEYS.statsToday] || {};
+  Object.entries(history || {}).forEach(([day, value]) => {
+    const parsed = new Date(`${day}T00:00:00`);
+    if (Number.isNaN(parsed.getTime()) || parsed.getTime() < cutoff.getTime()) {
+      return;
+    }
+    kept[day] = value;
+  });
+  return kept;
+}
+
+function pruneRecentlyReset(recentlyReset = {}, now = Date.now()) {
+  return Object.fromEntries(
+    Object.entries(recentlyReset || {}).filter(([, timestamp]) => {
+      const numeric = Number(timestamp || 0);
+      return Number.isFinite(numeric) && numeric > 0 && now - numeric < RECENT_RESET_GRACE_MS;
+    }),
+  );
+}
+
+async function ensureDayResetUnlocked(now = Date.now()) {
+  const today = getDayKey(new Date(now));
+  const data = await get([
+    KEYS.dayKey,
+    KEYS.statsToday,
+    KEYS.statsHistory,
+    KEYS.hourlyUsageHistory,
+    KEYS.snoozeHistory,
+    KEYS.recentlyReset,
+  ]);
+  const statsHistory = pruneDayKeyedHistory(data[KEYS.statsHistory] || {}, now);
+  const hourlyUsageHistory = pruneDayKeyedHistory(
+    data[KEYS.hourlyUsageHistory] || {},
+    now,
+  );
+  const snoozeHistory = pruneDayKeyedHistory(data[KEYS.snoozeHistory] || {}, now);
+  const recentlyReset = pruneRecentlyReset(data[KEYS.recentlyReset] || {}, now);
+  const wasPruned =
+    Object.keys(statsHistory).length !== Object.keys(data[KEYS.statsHistory] || {}).length ||
+    Object.keys(hourlyUsageHistory).length !==
+      Object.keys(data[KEYS.hourlyUsageHistory] || {}).length ||
+    Object.keys(snoozeHistory).length !== Object.keys(data[KEYS.snoozeHistory] || {}).length ||
+    Object.keys(recentlyReset).length !== Object.keys(data[KEYS.recentlyReset] || {}).length;
+
+  if (!data[KEYS.dayKey]) {
+    await set({
+      [KEYS.dayKey]: today,
+      [KEYS.statsHistory]: statsHistory,
+      [KEYS.hourlyUsageHistory]: hourlyUsageHistory,
+      [KEYS.snoozeHistory]: snoozeHistory,
+      [KEYS.recentlyReset]: recentlyReset,
+    });
+    return false;
+  }
+  if (data[KEYS.dayKey] === today) {
+    if (wasPruned) {
+      await set({
+        [KEYS.statsHistory]: statsHistory,
+        [KEYS.hourlyUsageHistory]: hourlyUsageHistory,
+        [KEYS.snoozeHistory]: snoozeHistory,
+        [KEYS.recentlyReset]: recentlyReset,
+      });
+    }
+    return false;
+  }
+
+  statsHistory[data[KEYS.dayKey]] = data[KEYS.statsToday] || {};
   await set({
     [KEYS.dayKey]: today,
-    [KEYS.statsHistory]: history,
+    [KEYS.statsHistory]: pruneDayKeyedHistory(statsHistory, now),
+    [KEYS.hourlyUsageHistory]: hourlyUsageHistory,
     [KEYS.statsToday]: {},
     [KEYS.allStatsToday]: {},
     [KEYS.alertsSent]: {},
-    [KEYS.snoozeHistory]: {},
+    [KEYS.snoozeHistory]: snoozeHistory,
+    [KEYS.recentlyReset]: recentlyReset,
   });
-  await queueDnrRulesSync();
+  return true;
+}
+
+async function ensureDayReset(now = Date.now()) {
+  const didReset = await serializeStorageMutation(() => ensureDayResetUnlocked(now));
+  if (didReset) await queueDnrRulesSync();
 }
 
 async function updateDomainActivity(domain, options = {}) {
@@ -979,61 +1078,62 @@ async function updateDomainActivity(domain, options = {}) {
   const countVisit = Boolean(options.countVisit);
   if (!isValidDomain(normalized) || (deltaMs <= 0 && !countVisit)) return;
 
-  await ensureDayReset();
-  const data = await get([
-    KEYS.statsToday,
-    KEYS.allStatsToday,
-    KEYS.hourlyUsageHistory,
-    KEYS.blockedDomains,
-    KEYS.snoozedDomains,
-    KEYS.recentlyReset,
-  ]);
-  const startMs = Number(options.startMs || Date.now() - deltaMs);
-  const endMs = Number(options.endMs || Date.now());
-  const statsToday = addUsage(
-    data[KEYS.statsToday] || {},
-    normalized,
-    deltaMs,
-    countVisit,
-  );
-  const allStatsToday = addUsage(
-    data[KEYS.allStatsToday] || {},
-    normalized,
-    deltaMs,
-    countVisit,
-  );
-  const config = normalizeLimitConfig(
-    entryForDomain(data[KEYS.blockedDomains] || {}, normalized),
-  );
-  const limitMs = config.enabled ? config.limitSeconds * 1000 : 0;
-  const previousUsedMs = Math.max(
-    0,
-    entryTimeMs(entryForDomain(data[KEYS.statsToday] || {}, normalized) || {}) -
-      deltaMs,
-  );
-  const nextUsedMs = activeLimitUsedMs(normalized, statsToday);
-  const crossedLimit =
-    limitMs > 0 &&
-    previousUsedMs < limitMs &&
-    nextUsedMs >= limitMs &&
-    !isSnoozed(normalized, data[KEYS.snoozedDomains] || {}) &&
-    !wasRecentlyReset(normalized, data[KEYS.recentlyReset] || {});
-
-  if (crossedLimit) {
-    clampUsage(statsToday, normalized, limitMs);
-    clampUsage(allStatsToday, normalized, limitMs);
-  }
-
-  await set({
-    [KEYS.statsToday]: statsToday,
-    [KEYS.allStatsToday]: allStatsToday,
-    [KEYS.hourlyUsageHistory]: addHourlyUsage(
-      data[KEYS.hourlyUsageHistory] || {},
+  await serializeStorageMutation(async () => {
+    await ensureDayResetUnlocked();
+    const data = await get([
+      KEYS.statsToday,
+      KEYS.allStatsToday,
+      KEYS.hourlyUsageHistory,
+      KEYS.blockedDomains,
+      KEYS.snoozedDomains,
+      KEYS.recentlyReset,
+    ]);
+    const startMs = Number(options.startMs || Date.now() - deltaMs);
+    const endMs = Number(options.endMs || Date.now());
+    const previousUsedMs = activeLimitUsedMs(
       normalized,
-      startMs,
-      endMs,
+      data[KEYS.statsToday] || {},
+    );
+    const statsToday = addUsage(
+      data[KEYS.statsToday] || {},
+      normalized,
+      deltaMs,
       countVisit,
-    ),
+    );
+    const allStatsToday = addUsage(
+      data[KEYS.allStatsToday] || {},
+      normalized,
+      deltaMs,
+      countVisit,
+    );
+    const config = normalizeLimitConfig(
+      entryForDomain(data[KEYS.blockedDomains] || {}, normalized),
+    );
+    const limitMs = config.enabled ? config.limitSeconds * 1000 : 0;
+    const nextUsedMs = activeLimitUsedMs(normalized, statsToday);
+    const crossedLimit =
+      limitMs > 0 &&
+      previousUsedMs < limitMs &&
+      nextUsedMs >= limitMs &&
+      !isSnoozed(normalized, data[KEYS.snoozedDomains] || {}) &&
+      !wasRecentlyReset(normalized, data[KEYS.recentlyReset] || {});
+
+    if (crossedLimit) {
+      clampUsage(statsToday, normalized, limitMs);
+      clampUsage(allStatsToday, normalized, limitMs);
+    }
+
+    await set({
+      [KEYS.statsToday]: statsToday,
+      [KEYS.allStatsToday]: allStatsToday,
+      [KEYS.hourlyUsageHistory]: addHourlyUsage(
+        data[KEYS.hourlyUsageHistory] || {},
+        normalized,
+        startMs,
+        endMs,
+        countVisit,
+      ),
+    });
   });
 
   const fresh = await get([KEYS.blockedDomains, KEYS.statsToday]);
@@ -1172,6 +1272,13 @@ async function setActiveDomain(tabId, countVisit = false, options = {}) {
   const domain = domainFromUrl(tab?.url || "");
   const previousTabDomain =
     stableTabId != null ? tabDomainMemory.get(stableTabId) || "" : "";
+  if (
+    stableTabId != null &&
+    previousTabDomain &&
+    previousTabDomain !== domain
+  ) {
+    await clearPatternPauseBypassForTab(stableTabId);
+  }
   setActiveContext(tabId, domain, 0);
   await persistActiveSession();
 
@@ -1636,45 +1743,281 @@ async function recordBehaviorEvent(event = {}) {
   const tabId = Number(event.tabId);
   if (Number.isFinite(tabId)) normalizedEvent.tabId = tabId;
 
-  const day = dayKeyForTimestamp(timestamp);
-  const data = await get([KEYS.behaviorHistory]);
-  const history = pruneBehaviorHistory(
-    data[KEYS.behaviorHistory] || {},
-    timestamp,
-  );
-  const current = {
-    ...emptyBehaviorDay(),
-    ...(history[day] || {}),
-  };
-  current.byType = { ...(current.byType || {}) };
-  current.byDomain = { ...(current.byDomain || {}) };
-  current.byHour = { ...(current.byHour || {}) };
-  current.events = Array.isArray(current.events) ? current.events.slice() : [];
+  await serializeStorageMutation(async () => {
+    const day = dayKeyForTimestamp(timestamp);
+    const data = await get([KEYS.behaviorHistory]);
+    const history = pruneBehaviorHistory(
+      data[KEYS.behaviorHistory] || {},
+      timestamp,
+    );
+    const current = {
+      ...emptyBehaviorDay(),
+      ...(history[day] || {}),
+    };
+    current.byType = { ...(current.byType || {}) };
+    current.byDomain = { ...(current.byDomain || {}) };
+    current.byHour = { ...(current.byHour || {}) };
+    current.events = Array.isArray(current.events) ? current.events.slice() : [];
 
-  current.count = Number(current.count || 0) + 1;
-  current.byType[type] = Number(current.byType[type] || 0) + 1;
+    current.count = Number(current.count || 0) + 1;
+    current.byType[type] = Number(current.byType[type] || 0) + 1;
 
-  if (normalizedEvent.domain) {
-    current.byDomain[normalizedEvent.domain] ||= {};
-    current.byDomain[normalizedEvent.domain][type] =
-      Number(current.byDomain[normalizedEvent.domain][type] || 0) + 1;
-  }
+    if (normalizedEvent.domain) {
+      current.byDomain[normalizedEvent.domain] ||= {};
+      current.byDomain[normalizedEvent.domain][type] =
+        Number(current.byDomain[normalizedEvent.domain][type] || 0) + 1;
+    }
 
-  const hourKey = String(normalizedEvent.hour).padStart(2, "0");
-  current.byHour[hourKey] ||= {};
-  current.byHour[hourKey][type] =
-    Number(current.byHour[hourKey][type] || 0) + 1;
-  current.events.push(normalizedEvent);
-  current.events = current.events.slice(-BEHAVIOR_HISTORY_MAX_EVENTS_PER_DAY);
+    const hourKey = String(normalizedEvent.hour).padStart(2, "0");
+    current.byHour[hourKey] ||= {};
+    current.byHour[hourKey][type] =
+      Number(current.byHour[hourKey][type] || 0) + 1;
+    current.events.push(normalizedEvent);
+    current.events = current.events.slice(-BEHAVIOR_HISTORY_MAX_EVENTS_PER_DAY);
 
-  await set({
-    [KEYS.behaviorHistory]: {
-      ...history,
-      [day]: current,
-    },
+    await set({
+      [KEYS.behaviorHistory]: {
+        ...history,
+        [day]: current,
+      },
+    });
   });
 
   await maybeGenerateInsightsAfterActivity({ allowNotifications: true });
+  return true;
+}
+
+function normalizedPatternPauseRules(rules = {}, now = Date.now()) {
+  const normalized = {};
+  Object.values(rules || {}).forEach((raw) => {
+    const rule = PatternPauseEngine.normalizeRule?.(raw, now);
+    if (!rule || !isValidDomain(rule.domain)) return;
+    normalized[rule.domain] = rule;
+  });
+  return normalized;
+}
+
+function prunePatternPauseDismissals(dismissals = {}, now = Date.now()) {
+  return Object.entries(dismissals || {}).reduce((result, [rawDomain, raw]) => {
+    const domain = normalizeDomain(rawDomain);
+    const until = Number(raw?.until || raw || 0);
+    if (isValidDomain(domain) && until > now) {
+      result[domain] = {
+        until,
+        dismissedAt: Math.max(0, Number(raw?.dismissedAt || 0)),
+      };
+    }
+    return result;
+  }, {});
+}
+
+function prunePatternPauseBypasses(bypasses = {}, now = Date.now()) {
+  return Object.entries(bypasses || {}).reduce((result, [key, raw]) => {
+    const domain = normalizeDomain(raw?.domain);
+    const expiresAt = Number(raw?.expiresAt || 0);
+    const tabId = Number(raw?.tabId ?? key);
+    if (
+      Number.isFinite(tabId) &&
+      isValidDomain(domain) &&
+      expiresAt > now
+    ) {
+      result[String(tabId)] = { tabId, domain, expiresAt };
+    }
+    return result;
+  }, {});
+}
+
+function patternPauseBypassIsActive(
+  bypasses = {},
+  tabId,
+  domain,
+  now = Date.now(),
+) {
+  const record = prunePatternPauseBypasses(bypasses, now)[String(tabId)];
+  return Boolean(
+    record && normalizeDomain(record.domain) === normalizeDomain(domain),
+  );
+}
+
+async function grantPatternPauseBypass(
+  tabId,
+  domain,
+  minutes = PatternPauseEngine.DEFAULT_BYPASS_MINUTES || 10,
+) {
+  const numericTabId = Number(tabId);
+  const normalized = normalizeDomain(domain);
+  if (!Number.isFinite(numericTabId) || !isValidDomain(normalized)) return false;
+  const now = Date.now();
+  await serializeStorageMutation(async () => {
+    const data = await get([KEYS.patternPauseBypasses]);
+    const bypasses = prunePatternPauseBypasses(
+      data[KEYS.patternPauseBypasses] || {},
+      now,
+    );
+    bypasses[String(numericTabId)] = {
+      tabId: numericTabId,
+      domain: normalized,
+      expiresAt: now + Math.max(1, Number(minutes || 10)) * 60 * 1000,
+    };
+    await set({ [KEYS.patternPauseBypasses]: bypasses });
+  });
+  return true;
+}
+
+async function clearPatternPauseBypassForTab(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return false;
+  await serializeStorageMutation(async () => {
+    const data = await get([KEYS.patternPauseBypasses]);
+    const bypasses = prunePatternPauseBypasses(
+      data[KEYS.patternPauseBypasses] || {},
+    );
+    if (!bypasses[String(numericTabId)]) return;
+    delete bypasses[String(numericTabId)];
+    await set({ [KEYS.patternPauseBypasses]: bypasses });
+  });
+  return true;
+}
+
+async function savePatternPauseRule(ruleInput = {}) {
+  const now = Date.now();
+  const rule = PatternPauseEngine.normalizeRule?.(ruleInput, now);
+  if (!rule || !isValidDomain(rule.domain)) return null;
+  await serializeStorageMutation(async () => {
+    const data = await get([KEYS.patternPauseRules]);
+    const rules = normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+      now,
+    );
+    rules[rule.domain] = rule;
+    await set({ [KEYS.patternPauseRules]: rules });
+  });
+  return rule;
+}
+
+async function recordPatternPauseOutcome(ruleInput = {}, type, meta = {}) {
+  const now = Number(meta.timestamp || Date.now());
+  const rule = PatternPauseEngine.normalizeRule?.(ruleInput, now);
+  const eventType = String(type || "").trim();
+  if (!rule || !isValidDomain(rule.domain) || !eventType) return false;
+
+  await serializeStorageMutation(async () => {
+    const data = await get([KEYS.patternPauseHistory]);
+    const history = PatternPauseEngine.normalizeHistory?.(
+      data[KEYS.patternPauseHistory] || {},
+    ) || { events: [], byRule: {} };
+    const event = {
+      id: randomToken("pattern-event"),
+      ruleId: rule.id,
+      domain: rule.domain,
+      type: eventType,
+      timestamp: now,
+    };
+    if (Number.isFinite(Number(meta.tabId))) event.tabId = Number(meta.tabId);
+
+    const counterByType = {
+      shown: "shown",
+      continued: "continued",
+      closed: "closed",
+      disabled: "disabled",
+    };
+    const summary = { ...(history.byRule?.[rule.id] || {}) };
+    const counter = counterByType[eventType];
+    if (counter) summary[counter] = Number(summary[counter] || 0) + 1;
+    summary.lastAt = now;
+    summary.domain = rule.domain;
+
+    await set({
+      [KEYS.patternPauseHistory]: {
+        events: [...history.events, event].slice(
+          -PATTERN_PAUSE_HISTORY_MAX_EVENTS,
+        ),
+        byRule: {
+          ...(history.byRule || {}),
+          [rule.id]: summary,
+        },
+      },
+    });
+  });
+  return true;
+}
+
+async function updatePatternPauseRule(domain, patch = {}) {
+  const normalized = normalizeDomain(domain);
+  const now = Date.now();
+  const data = await get([KEYS.patternPauseRules]);
+  const rules = normalizedPatternPauseRules(
+    data[KEYS.patternPauseRules] || {},
+    now,
+  );
+  const current = rules[normalized];
+  if (!current) return null;
+  const nextMode = ["today", "ongoing"].includes(patch.mode)
+    ? patch.mode
+    : current.mode;
+  const next = PatternPauseEngine.normalizeRule?.(
+    {
+      ...current,
+      ...patch,
+      domain: normalized,
+      mode: nextMode,
+      expiresAt:
+        nextMode === "ongoing"
+          ? 0
+          : Number(patch.expiresAt || current.expiresAt || PatternPauseEngine.endOfLocalDay?.(now)),
+      updatedAt: now,
+    },
+    now,
+  );
+  return savePatternPauseRule(next);
+}
+
+async function enforcePatternPauseIfNeeded(tabId, tab, domain, data = {}) {
+  const now = Date.now();
+  if (data[KEYS.uiSettings]?.patternPausesEnabled === false) return false;
+  const rules = normalizedPatternPauseRules(
+    data[KEYS.patternPauseRules] || {},
+    now,
+  );
+  const rule = PatternPauseEngine.ruleForDomain?.(rules, domain, now);
+  if (!rule) return false;
+  if (
+    patternPauseBypassIsActive(
+      data[KEYS.patternPauseBypasses] || {},
+      tabId,
+      domain,
+      now,
+    )
+  ) {
+    return false;
+  }
+
+  const evidence = PatternPauseEngine.buildPatternEvidence?.(
+    { behaviorHistory: data[KEYS.behaviorHistory] || {}, now },
+    domain,
+    { now, windowMinutes: rule.windowMinutes },
+  );
+  if (!PatternPauseEngine.shouldTrigger?.(rule, evidence, { now })) return false;
+
+  const redirectUrl = patternPauseUrl(domain, rule, tab?.url || "");
+  const redirected = await chrome.tabs
+    .update(tabId, { url: redirectUrl })
+    .then(() => true)
+    .catch(() => false);
+  if (!redirected) return false;
+
+  const updatedRule = await updatePatternPauseRule(domain, {
+    lastTriggeredAt: now,
+  });
+  await recordBehaviorEvent({
+    type: "pattern_pause_redirect",
+    domain,
+    tabId,
+  });
+  await recordPatternPauseOutcome(updatedRule || rule, "shown", {
+    timestamp: now,
+    tabId,
+  });
   return true;
 }
 
@@ -1704,7 +2047,16 @@ function closeScheduledBreak(block = {}, now = Date.now()) {
 function scheduledContributionMs(block = {}, endedAt = Date.now()) {
   const startedAt = Number(block.startedAt || 0);
   if (!Number.isFinite(startedAt) || startedAt <= 0) return 0;
-  return Math.max(0, endedAt - startedAt - scheduledBreakMs(block, endedAt));
+  const matchingWindow = scheduleWindowsForDate(block, new Date(startedAt)).find(
+    (window) => startedAt >= window.startAt && startedAt < window.endAt,
+  );
+  const effectiveEnd = matchingWindow
+    ? Math.min(endedAt, matchingWindow.endAt)
+    : endedAt;
+  return Math.max(
+    0,
+    effectiveEnd - startedAt - scheduledBreakMs(block, effectiveEnd),
+  );
 }
 
 async function addScheduledReclaimForBlock(block = {}, endedAt = Date.now()) {
@@ -1742,33 +2094,35 @@ async function addBlockReclaim({
   const safeEstimatedMs = Math.max(0, Number(estimatedMs || 0));
   if (safeEstimatedMs <= 0) return false;
 
-  const day = dayKeyForTimestamp(timestamp);
-  const data = await get([KEYS.blockReclaimStats]);
-  const history = data[KEYS.blockReclaimStats] || {};
-  const current = history[day] || {
-    count: 0,
-    estimatedMs: 0,
-    bySource: {},
-    byTier: {},
-  };
+  await serializeStorageMutation(async () => {
+    const day = dayKeyForTimestamp(timestamp);
+    const data = await get([KEYS.blockReclaimStats]);
+    const history = data[KEYS.blockReclaimStats] || {};
+    const current = history[day] || {
+      count: 0,
+      estimatedMs: 0,
+      bySource: {},
+      byTier: {},
+    };
 
-  await set({
-    [KEYS.blockReclaimStats]: {
-      ...history,
-      [day]: {
-        ...current,
-        count: Number(current.count || 0) + 1,
-        estimatedMs: Number(current.estimatedMs || 0) + safeEstimatedMs,
-        bySource: {
-          ...(current.bySource || {}),
-          [sourceKey]: Number(current.bySource?.[sourceKey] || 0) + 1,
-        },
-        byTier: {
-          ...(current.byTier || {}),
-          [tierKey]: Number(current.byTier?.[tierKey] || 0) + 1,
+    await set({
+      [KEYS.blockReclaimStats]: {
+        ...history,
+        [day]: {
+          ...current,
+          count: Number(current.count || 0) + 1,
+          estimatedMs: Number(current.estimatedMs || 0) + safeEstimatedMs,
+          bySource: {
+            ...(current.bySource || {}),
+            [sourceKey]: Number(current.bySource?.[sourceKey] || 0) + 1,
+          },
+          byTier: {
+            ...(current.byTier || {}),
+            [tierKey]: Number(current.byTier?.[tierKey] || 0) + 1,
+          },
         },
       },
-    },
+    });
   });
   return true;
 }
@@ -1785,6 +2139,10 @@ async function enforceIfNeeded(tabId = activeTabId) {
     KEYS.statsToday,
     KEYS.snoozedDomains,
     KEYS.recentlyReset,
+    KEYS.behaviorHistory,
+    KEYS.patternPauseRules,
+    KEYS.patternPauseBypasses,
+    KEYS.uiSettings,
   ]);
 
   const scheduled = activeScheduledBlockFor(
@@ -1824,6 +2182,10 @@ async function enforceIfNeeded(tabId = activeTabId) {
       source: "limit",
       tier,
     });
+    return true;
+  }
+
+  if (await enforcePatternPauseIfNeeded(tabId, tab, domain, data)) {
     return true;
   }
 
@@ -2177,6 +2539,7 @@ async function generateInsights(options = {}) {
     KEYS.allStatsToday,
     KEYS.statsHistory,
     KEYS.hourlyUsageHistory,
+    KEYS.behaviorHistory,
     KEYS.blockedDomains,
     KEYS.activeSession,
     KEYS.personalInsights,
@@ -2365,7 +2728,9 @@ function parseTime(value) {
   let hour = Number(match[1]);
   const minute = Number(match[2] || 0);
   const meridian = match[3]?.toLowerCase();
-  if (minute < 0 || minute > 59 || hour < 0 || hour > 23) return null;
+  if (minute < 0 || minute > 59) return null;
+  if (meridian && (hour < 1 || hour > 12)) return null;
+  if (!meridian && (hour < 0 || hour > 23)) return null;
   if (meridian === "pm" && hour < 12) hour += 12;
   if (meridian === "am" && hour === 12) hour = 0;
 
@@ -2454,7 +2819,13 @@ async function activateScheduledBlock(id) {
   const activeBlocks = (data[KEYS.activeBlocks] || []).filter(
     (item) => item.id !== id,
   );
-  activeBlocks.push({ ...block, startedAt: Date.now(), breakMs: 0 });
+  const now = Date.now();
+  const window = scheduledWindow(block, new Date(now));
+  activeBlocks.push({
+    ...block,
+    startedAt: window && now >= window.startAt ? window.startAt : now,
+    breakMs: 0,
+  });
   await set({ [KEYS.activeBlocks]: activeBlocks });
   await queueDnrRulesSync();
   await redirectOpenTabsForDomain(block.domain, "scheduled", block.tier);
@@ -2485,12 +2856,44 @@ async function deactivateScheduledBlock(id) {
 async function reconcileSchedules() {
   const data = await get([KEYS.scheduledBlocks, KEYS.activeBlocks]);
   const scheduled = (data[KEYS.scheduledBlocks] || []).map(normalizeBlock);
+  const previousActive = data[KEYS.activeBlocks] || [];
+  const previousById = new Map(previousActive.map((block) => [block.id, block]));
   const active = [];
+  const now = Date.now();
 
   for (const block of scheduled) {
-    if (block.enabled && isScheduleActive(block))
-      active.push({ ...block, startedAt: Date.now(), breakMs: 0 });
+    if (block.enabled && isScheduleActive(block, now)) {
+      const window = scheduledWindow(block, new Date(now));
+      const previous = previousById.get(block.id);
+      const previousStartedAt = Number(previous?.startedAt || 0);
+      const startedAt =
+        window &&
+        previousStartedAt >= window.startAt &&
+        previousStartedAt < window.endAt
+          ? previousStartedAt
+          : window?.startAt || now;
+      let next = {
+        ...block,
+        startedAt,
+        breakMs: Math.max(0, Number(previous?.breakMs || 0)),
+      };
+      if (previous?.breakStartedAt) {
+        next = Number(previous.breakUntil || 0) > now
+          ? {
+              ...next,
+              breakStartedAt: previous.breakStartedAt,
+              breakUntil: previous.breakUntil,
+            }
+          : closeScheduledBreak({ ...next, ...previous }, now);
+      }
+      active.push(next);
+    }
     await scheduleBlockAlarms(block);
+  }
+
+  const activeIds = new Set(active.map((block) => block.id));
+  for (const block of previousActive) {
+    if (!activeIds.has(block.id)) await addScheduledReclaimForBlock(block, now);
   }
 
   await set({ [KEYS.scheduledBlocks]: scheduled, [KEYS.activeBlocks]: active });
@@ -2500,56 +2903,77 @@ async function reconcileSchedules() {
 async function snoozeDomain(domain, minutes, challengeToken = null) {
   const normalized = normalizeDomain(domain);
   if (!isValidDomain(normalized)) throw new Error("Invalid domain");
-
-  const data = await get([
-    KEYS.blockedDomains,
-    KEYS.snoozedDomains,
-    KEYS.snoozeHistory,
-    KEYS.activeBlocks,
-  ]);
-  const activeBlocks = data[KEYS.activeBlocks] || [];
-  const scheduled = activeScheduledBlockFor(normalized, activeBlocks);
-  const tier = scheduled
-    ? normalizeTier(scheduled.tier, "standard")
-    : normalizeLimitConfig(data[KEYS.blockedDomains]?.[normalized]).tier;
-  if (
-    tier === "strict" &&
-    !(await verifyStrictChallengeToken(challengeToken, normalized))
-  ) {
-    throw new Error("Complete the challenge before snoozing.");
+  const safeMinutes = Math.round(Number(minutes));
+  if (!Number.isFinite(safeMinutes) || safeMinutes < 1 || safeMinutes > 60) {
+    throw new Error("Snooze duration must be between 1 and 60 minutes.");
   }
-  if (tier === "immutable")
-    throw new Error("Immutable blocks cannot be snoozed.");
 
-  const expiresAt = Date.now() + Math.max(1, Number(minutes || 5)) * 60 * 1000;
-  const snoozedDomains = data[KEYS.snoozedDomains] || {};
-  snoozedDomains[normalized] = { expiresAt, minutes: Number(minutes || 5) };
+  const { expiresAt, scheduled, tier } = await serializeStorageMutation(
+    async () => {
+      const data = await get([
+        KEYS.blockedDomains,
+        KEYS.snoozedDomains,
+        KEYS.snoozeHistory,
+        KEYS.activeBlocks,
+      ]);
+      const activeBlocks = data[KEYS.activeBlocks] || [];
+      const scheduledBlock = activeScheduledBlockFor(normalized, activeBlocks);
+      const effectiveTier = scheduledBlock
+        ? normalizeTier(scheduledBlock.tier, "standard")
+        : normalizeLimitConfig(data[KEYS.blockedDomains]?.[normalized]).tier;
+      if (
+        effectiveTier === "strict" &&
+        !(await verifyStrictChallengeToken(challengeToken, normalized))
+      ) {
+        throw new Error("Complete the challenge before snoozing.");
+      }
+      if (effectiveTier === "immutable") {
+        throw new Error("Immutable blocks cannot be snoozed.");
+      }
 
-  const today = getDayKey();
-  const snoozeHistory = data[KEYS.snoozeHistory] || {};
-  snoozeHistory[today] = Number(snoozeHistory[today] || 0) + 1;
+      const now = Date.now();
+      const snoozeExpiresAt = now + safeMinutes * 60 * 1000;
+      const snoozedDomains = data[KEYS.snoozedDomains] || {};
+      snoozedDomains[normalized] = {
+        expiresAt: snoozeExpiresAt,
+        minutes: safeMinutes,
+      };
+
+      const today = getDayKey();
+      const snoozeHistory = data[KEYS.snoozeHistory] || {};
+      snoozeHistory[today] = Number(snoozeHistory[today] || 0) + 1;
+      const updates = {
+        [KEYS.snoozedDomains]: snoozedDomains,
+        [KEYS.snoozeHistory]: snoozeHistory,
+      };
+      if (scheduledBlock) {
+        updates[KEYS.activeBlocks] = activeBlocks.map((block) => {
+          if (normalizeDomain(block.domain) !== normalized) return block;
+          const closed = closeScheduledBreak(block, now);
+          return {
+            ...closed,
+            breakStartedAt: now,
+            breakUntil: snoozeExpiresAt,
+          };
+        });
+      }
+
+      await set(updates);
+      return {
+        expiresAt: snoozeExpiresAt,
+        scheduled: Boolean(scheduledBlock),
+        tier: effectiveTier,
+      };
+    },
+  );
+
   await recordBehaviorEvent({
     type: "snooze",
     domain: normalized,
     source: scheduled ? "scheduled" : "limit",
     tier,
-    minutes: Number(minutes || 5),
+    minutes: safeMinutes,
   });
-
-  const updates = {
-    [KEYS.snoozedDomains]: snoozedDomains,
-    [KEYS.snoozeHistory]: snoozeHistory,
-  };
-  if (scheduled) {
-    const now = Date.now();
-    updates[KEYS.activeBlocks] = activeBlocks.map((block) => {
-      if (normalizeDomain(block.domain) !== normalized) return block;
-      const closed = closeScheduledBreak(block, now);
-      return { ...closed, breakStartedAt: now, breakUntil: expiresAt };
-    });
-  }
-
-  await set(updates);
   chrome.alarms.create(`snoozeEnd_${normalized}`, { when: expiresAt });
   await queueDnrRulesSync();
   await clearActiveLimitAlarms(normalized);
@@ -2636,11 +3060,27 @@ async function refreshStoredPremiumStatus(source = "manual") {
   const token = data[WHOP_PENDING_TOKEN_KEY] || data[WHOP_TOKEN_KEY] || "";
   const fallback = data[PREMIUM_KEY] || { active: false, planName: "Free" };
 
-  if (!token || typeof fetch !== "function") {
+  if (!token) {
+    const premium = {
+      active: false,
+      planName: "Free",
+      checkedAt: Date.now(),
+      source,
+    };
+    await set({ [PREMIUM_KEY]: premium });
+    return premium;
+  }
+
+  if (typeof fetch !== "function") {
     await set({
-      [PREMIUM_KEY]: { ...fallback, checkedAt: Date.now(), source },
+      [PREMIUM_KEY]: {
+        ...fallback,
+        stale: true,
+        refreshFailedAt: Date.now(),
+        source,
+      },
     });
-    return { ...fallback, checkedAt: Date.now(), source };
+    return { ...fallback, stale: true, refreshFailedAt: Date.now(), source };
   }
 
   try {
@@ -2649,7 +3089,13 @@ async function refreshStoredPremiumStatus(source = "manual") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     });
+    if (!response || response.ok === false) {
+      throw new Error(`Premium verification failed (${response.status})`);
+    }
     const result = await response.json();
+    if (typeof result?.active !== "boolean") {
+      throw new Error("Premium verification returned an invalid response");
+    }
     const premium = {
       active: Boolean(result.active),
       planName: result.planName || (result.active ? "Pro" : "Free"),
@@ -2663,7 +3109,14 @@ async function refreshStoredPremiumStatus(source = "manual") {
     });
     return premium;
   } catch {
-    return fallback;
+    const stale = {
+      ...fallback,
+      stale: true,
+      refreshFailedAt: Date.now(),
+      source,
+    };
+    await set({ [PREMIUM_KEY]: stale }).catch(() => {});
+    return stale;
   }
 }
 
@@ -2680,6 +3133,10 @@ async function initializeExtension(options = {}) {
     KEYS.insightNotificationHistory,
     KEYS.insightNotificationDaily,
     KEYS.behaviorHistory,
+    KEYS.patternPauseRules,
+    KEYS.patternPauseHistory,
+    KEYS.patternPauseDismissals,
+    KEYS.patternPauseBypasses,
   ]);
   await set({
     [KEYS.onboarding]: data[KEYS.onboarding] || {
@@ -2698,6 +3155,19 @@ async function initializeExtension(options = {}) {
     [KEYS.insightNotificationDaily]: data[KEYS.insightNotificationDaily] || {},
     [KEYS.behaviorHistory]: pruneBehaviorHistory(
       data[KEYS.behaviorHistory] || {},
+    ),
+    [KEYS.patternPauseRules]: normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+    ),
+    [KEYS.patternPauseHistory]:
+      PatternPauseEngine.normalizeHistory?.(
+        data[KEYS.patternPauseHistory] || {},
+      ) || { events: [], byRule: {} },
+    [KEYS.patternPauseDismissals]: prunePatternPauseDismissals(
+      data[KEYS.patternPauseDismissals] || {},
+    ),
+    [KEYS.patternPauseBypasses]: prunePatternPauseBypasses(
+      data[KEYS.patternPauseBypasses] || {},
     ),
   });
   await reconcileSchedules();
@@ -2811,6 +3281,238 @@ const handlers = {
       now: request.now,
     }),
   dismissInsight: async (request) => dismissInsight(request.id),
+  enablePatternPause: async (request) => {
+    const now = Date.now();
+    const domain = normalizeDomain(request.domain);
+    if (!isValidDomain(domain)) {
+      return { success: false, error: "Choose a valid site." };
+    }
+    const data = await get([
+      KEYS.behaviorHistory,
+      KEYS.patternPauseRules,
+      KEYS.patternPauseDismissals,
+      KEYS.uiSettings,
+    ]);
+    if (data[KEYS.uiSettings]?.patternPausesEnabled === false) {
+      return { success: false, error: "Pattern pauses are turned off in settings." };
+    }
+    const thresholdVisits = Math.min(
+      10,
+      Math.max(3, Math.round(Number(request.thresholdVisits || 3))),
+    );
+    const windowMinutes = Math.min(
+      120,
+      Math.max(15, Math.round(Number(request.windowMinutes || 30))),
+    );
+    const evidence = PatternPauseEngine.buildPatternEvidence?.(
+      { behaviorHistory: data[KEYS.behaviorHistory] || {}, now },
+      domain,
+      { now, windowMinutes },
+    );
+    if (
+      !evidence ||
+      Number(evidence.visitCount || 0) < thresholdVisits ||
+      Number(evidence.signalCount || 0) < 1
+    ) {
+      return {
+        success: false,
+        error: "This pattern is no longer active. Saturn will keep watching locally.",
+      };
+    }
+
+    const existingRules = normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+      now,
+    );
+    const existing = existingRules[domain] || {};
+    const mode = request.mode === "ongoing" ? "ongoing" : "today";
+    const rule = await savePatternPauseRule({
+      ...existing,
+      id: existing.id || `pattern:${domain}`,
+      domain,
+      enabled: true,
+      mode,
+      createdAt: Number(existing.createdAt || now),
+      updatedAt: now,
+      expiresAt:
+        mode === "ongoing" ? 0 : PatternPauseEngine.endOfLocalDay?.(now),
+      thresholdVisits,
+      windowMinutes,
+      minSignals: 1,
+      sourceInsightType: String(
+        request.sourceInsightType || existing.sourceInsightType || "behavior_pattern",
+      ),
+      lastTriggeredAt: 0,
+    });
+    const dismissals = prunePatternPauseDismissals(
+      data[KEYS.patternPauseDismissals] || {},
+      now,
+    );
+    delete dismissals[domain];
+    await set({ [KEYS.patternPauseDismissals]: dismissals });
+    await recordBehaviorEvent({ type: "pattern_pause_enabled", domain });
+    await recordPatternPauseOutcome(rule, "enabled", { timestamp: now });
+    return { success: true, rule, evidence };
+  },
+  updatePatternPauseRule: async (request) => {
+    const domain = normalizeDomain(request.domain);
+    const patch = {};
+    if (typeof request.enabled === "boolean") patch.enabled = request.enabled;
+    if (request.mode === "ongoing") patch.mode = "ongoing";
+    if (request.mode === "today") {
+      patch.mode = "today";
+      patch.expiresAt = PatternPauseEngine.endOfLocalDay?.();
+    }
+    if (request.thresholdVisits != null) {
+      patch.thresholdVisits = request.thresholdVisits;
+    }
+    if (request.windowMinutes != null) patch.windowMinutes = request.windowMinutes;
+    const rule = await updatePatternPauseRule(domain, patch);
+    if (!rule) return { success: false, error: "Pattern pause not found." };
+    const outcomeType =
+      patch.enabled === false
+        ? "disabled"
+        : patch.mode === "ongoing"
+          ? "kept"
+          : "updated";
+    await recordBehaviorEvent({ type: `pattern_pause_${outcomeType}`, domain });
+    await recordPatternPauseOutcome(rule, outcomeType);
+    return { success: true, rule };
+  },
+  dismissPatternPauseSuggestion: async (request) => {
+    const domain = normalizeDomain(request.domain);
+    if (!isValidDomain(domain)) {
+      return { success: false, error: "Pattern suggestion not found." };
+    }
+    const now = Date.now();
+    const data = await get([KEYS.patternPauseDismissals]);
+    const dismissals = prunePatternPauseDismissals(
+      data[KEYS.patternPauseDismissals] || {},
+      now,
+    );
+    dismissals[domain] = {
+      dismissedAt: now,
+      until: PatternPauseEngine.endOfLocalDay?.(now),
+    };
+    await set({ [KEYS.patternPauseDismissals]: dismissals });
+    await recordBehaviorEvent({
+      type: "pattern_pause_suggestion_dismissed",
+      domain,
+    });
+    return { success: true, until: dismissals[domain].until };
+  },
+  getPatternPauseContext: async (request, sender) => {
+    const now = Date.now();
+    const domain = normalizeDomain(request.domain);
+    const data = await get([
+      KEYS.patternPauseRules,
+      KEYS.patternPauseHistory,
+      KEYS.behaviorHistory,
+      KEYS.uiSettings,
+    ]);
+    const rules = normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+      now,
+    );
+    const rule = rules[domain];
+    if (
+      !rule ||
+      !PatternPauseEngine.isRuleActive?.(rule, now) ||
+      data[KEYS.uiSettings]?.patternPausesEnabled === false ||
+      String(request.ruleId || rule.id) !== rule.id
+    ) {
+      return { success: false, error: "Pattern pause not found." };
+    }
+    const evidence = PatternPauseEngine.buildPatternEvidence?.(
+      { behaviorHistory: data[KEYS.behaviorHistory] || {}, now },
+      domain,
+      { now, windowMinutes: rule.windowMinutes },
+    );
+    const summary = PatternPauseEngine.summarizeRuleHistory?.(
+      data[KEYS.patternPauseHistory] || {},
+      rule,
+    );
+    return {
+      success: true,
+      rule,
+      evidence,
+      summary,
+      original: safeOriginalUrlForDomain(domain, request.original),
+      tabId: sender?.tab?.id ?? null,
+    };
+  },
+  continuePatternPause: async (request, sender) => {
+    const now = Date.now();
+    const domain = normalizeDomain(request.domain);
+    const data = await get([KEYS.patternPauseRules]);
+    const rules = normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+      now,
+    );
+    const rule = rules[domain];
+    if (!rule) return { success: false, error: "Pattern pause not found." };
+    const tabId = sender?.tab?.id;
+    await grantPatternPauseBypass(tabId, domain, rule.bypassMinutes);
+    await updatePatternPauseRule(domain, { lastOutcomeAt: now });
+    await recordBehaviorEvent({
+      type: "pattern_pause_continued",
+      domain,
+      tabId,
+    });
+    await recordPatternPauseOutcome(rule, "continued", { timestamp: now, tabId });
+    return {
+      success: true,
+      redirectUrl: redirectUrlForDomain(domain, request, sender),
+    };
+  },
+  closePatternPauseTab: async (request, sender) => {
+    const now = Date.now();
+    const domain = normalizeDomain(request.domain);
+    const data = await get([KEYS.patternPauseRules]);
+    const rules = normalizedPatternPauseRules(
+      data[KEYS.patternPauseRules] || {},
+      now,
+    );
+    const rule = rules[domain];
+    if (!rule) return { success: false, error: "Pattern pause not found." };
+    const tabId = sender?.tab?.id;
+    await updatePatternPauseRule(domain, { lastOutcomeAt: now });
+    await recordBehaviorEvent({
+      type: "pattern_pause_closed",
+      domain,
+      tabId,
+    });
+    await recordPatternPauseOutcome(rule, "closed", { timestamp: now, tabId });
+    if (Number.isFinite(Number(tabId))) {
+      setTimeout(() => {
+        chrome.tabs.remove?.(Number(tabId)).catch?.(() => {});
+      }, 50);
+    }
+    return { success: true, shouldClose: true };
+  },
+  disablePatternPause: async (request, sender) => {
+    const now = Date.now();
+    const domain = normalizeDomain(request.domain);
+    const rule = await updatePatternPauseRule(domain, {
+      enabled: false,
+      lastOutcomeAt: now,
+    });
+    if (!rule) return { success: false, error: "Pattern pause not found." };
+    await recordBehaviorEvent({
+      type: "pattern_pause_disabled",
+      domain,
+      tabId: sender?.tab?.id,
+    });
+    await recordPatternPauseOutcome(rule, "disabled", {
+      timestamp: now,
+      tabId: sender?.tab?.id,
+    });
+    return {
+      success: true,
+      rule,
+      redirectUrl: redirectUrlForDomain(domain, request, sender),
+    };
+  },
   trackAnalyticsEvent: async (request) => {
     await sendAnalyticsEvent(request.eventName, request.params || {});
     return { success: true };
@@ -2957,9 +3659,7 @@ const handlers = {
         return { success: false, error: state.message };
       }
     }
-    const items = { [ADMIN_OVERRIDE_KEY]: Boolean(request.enabled) };
-    if (!request.enabled) items[ADMIN_OVERRIDE_LAST_USED_KEY] = "";
-    await set(items);
+    await set({ [ADMIN_OVERRIDE_KEY]: Boolean(request.enabled) });
     return { success: true };
   },
   adminOverrideBypassImmutable: async (request, sender) => {
@@ -3160,6 +3860,7 @@ chrome.tabs.onRemoved?.addListener((tabId) => {
   if (Number.isFinite(numericTabId)) {
     tabDomainMemory.delete(numericTabId);
     recentCreatedTabs.delete(numericTabId);
+    clearPatternPauseBypassForTab(numericTabId).catch(() => {});
   }
   if (tabId === activeTabId) {
     clearActiveSession().catch(() => {});
@@ -3295,5 +3996,17 @@ if (typeof module !== "undefined" && module.exports) {
   global.handleActivePageHeartbeat = handleActivePageHeartbeat;
   global.handleWindowFocusChanged = handleWindowFocusChanged;
   global.recordBehaviorEvent = recordBehaviorEvent;
+  global.patternPauseUrl = patternPauseUrl;
+  global.enforcePatternPauseIfNeeded = enforcePatternPauseIfNeeded;
+  global.grantPatternPauseBypass = grantPatternPauseBypass;
+  global.clearPatternPauseBypassForTab = clearPatternPauseBypassForTab;
+  global.recordPatternPauseOutcome = recordPatternPauseOutcome;
+  global.updatePatternPauseRule = updatePatternPauseRule;
+  global.ensureDayReset = ensureDayReset;
+  global.updateDomainActivity = updateDomainActivity;
+  global.reconcileSchedules = reconcileSchedules;
+  global.parseTime = parseTime;
+  global.refreshStoredPremiumStatus = refreshStoredPremiumStatus;
+  global.snoozeDomain = snoozeDomain;
   global.ACTIVE_LIMIT_BADGE_ALARM = ACTIVE_LIMIT_BADGE_ALARM;
 }

@@ -1,6 +1,7 @@
 // Mock Chrome API for testing
 const chromeMock = {
     runtime: {
+        id: 'test-id',
         getManifest: jest.fn(() => ({
             version: '2.1.5'
         })),
@@ -35,7 +36,8 @@ const chromeMock = {
     tabs: {
         query: jest.fn(async () => []),
         get: jest.fn(async () => null),
-        update: jest.fn(async () => ({}))
+        update: jest.fn(async () => ({})),
+        remove: jest.fn(async () => true)
         ,
         onActivated: { addListener: jest.fn() },
         onUpdated: { addListener: jest.fn() },

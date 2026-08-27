@@ -21,6 +21,7 @@ release/
 .vercel/
 website/dist/
 test-results/
+coverage/
 dashboard-exports-*/
 dashboard-exports-*.zip
 ga4-data-api-export-*/

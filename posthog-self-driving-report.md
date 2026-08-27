@@ -114,7 +114,11 @@ PostHog Self-driving is now configured for Saturn (project 532977). Session Repl
 ---
 
 ### `signals-scout-saturn-github-issues`
-**What it watches:** The `github_syntoniousrex_screen-time-manager__issues` warehouse table for issue backlog accumulation (net new open issues vs. 4-week trailing average) and stale issue age distribution (issues open >30 days as a share of total open).
+**What it watches:** The repository-specific GitHub Issues warehouse table for issue backlog accumulation (net new open issues vs. 4-week trailing average) and stale issue age distribution (issues open >30 days as a share of total open).
+
+**Table discovery:** Start each run with a live data-warehouse catalog lookup for the connected GitHub source and `syntoniousrex/screen-time-manager` repository, then select the materialized `issues` table from that catalog. Do not hard-code `github_syntoniousrex_screen-time-manager__issues` as the only acceptable table name; PostHog may leave the schema's `table` field null until the first full sync or materialize the table under a source-specific name. Treat catalog absence, authorization failures, or rate-limit failures as source-unavailable close-outs, not backlog findings.
+
+**Empty-state handling:** After table discovery succeeds, issue the metric query against the discovered table. If the table exists but has zero rows, close out as "no GitHub issues rows available yet" rather than reporting a missing table. Only evaluate backlog accumulation and stale issue percentage once the table is both materialized and queryable.
 
 **Discriminator:** Latest complete week's new open issues exceeding the 4-week average by >5, OR stale issue percentage (open >30 days / total open) exceeding 60%. Issues cited by count and date only — no issue titles or body text.
 
@@ -134,7 +138,7 @@ PostHog Self-driving is now configured for Saturn (project 532977). Session Repl
 - [ ] **Verify exception autocapture** — trigger a controlled browser exception after deployment and confirm it appears in PostHog Error Tracking.
 - [ ] **Run the production build** — the website build was not run during the original integration setup. Run `npm run website:build` and fix any lint, type, or bundling errors.
 - [ ] **Set deployment environment variables** — confirm `VITE_PUBLIC_POSTHOG_KEY` and `VITE_PUBLIC_POSTHOG_HOST` are set in every deployment environment (see `website/.env.example`).
-- [ ] **GitHub Issues warehouse sync** — the `issues` schema shows `table: null` (data not yet materialized). Once the GitHub warehouse source completes its first full sync, the `signals-scout-saturn-github-issues` custom scout will start producing findings.
+- [ ] **GitHub Issues warehouse sync** — the `issues` schema previously showed `table: null` (data not yet materialized). Keep the custom scout's table discovery catalog-based so it can find the actual materialized table name after sync, and so it can distinguish a missing table from a real table with no rows.
 - [ ] **Re-enable disabled scouts as new surfaces are adopted** — e.g. enable `signals-scout-feature-flags` when you start using feature flags, `signals-scout-surveys` when you add surveys, `signals-scout-anomaly-detection` once key metric dashboards exist.
 
 ---
@@ -144,4 +148,4 @@ PostHog Self-driving is now configured for Saturn (project 532977). Session Repl
 - The scout coordinator picks up new configs within **~30 minutes**; the seven enabled scouts will fire on their next tick.
 - Each scout run draws from the project's daily budget (100 runs/day during early access). With 7 enabled scouts the troop uses a small fraction of that allowance.
 - Scouts write findings as reports in your [Self-driving inbox](https://us.posthog.com/project/532977/inbox). Immediately-actionable reports can auto-start coding tasks.
-- The custom scouts will close out quietly until traffic arrives (`saturn-walkthrough`) or the GitHub issues table materializes (`saturn-github-issues`) — that is normal behavior, not an error.
+- The custom scouts will close out quietly until traffic arrives (`saturn-walkthrough`) or the GitHub issues table is discoverable and queryable (`saturn-github-issues`) — that is normal behavior, not an error.

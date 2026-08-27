@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Pattern pause · Saturn</title>
+    <link rel="stylesheet" href="pattern-pause.css" />
+  </head>
+  <body>
+    <div class="space" aria-hidden="true">
+      <span class="star star-a"></span>
+      <span class="star star-b"></span>
+      <span class="star star-c"></span>
+      <span class="horizon"></span>
+    </div>
+
+    <header class="saturn-brand" aria-label="Saturn">
+      <img src="assets/planets/saturn-app-icon-128.png" alt="" />
+      <span>Saturn</span>
+    </header>
+
+    <main class="pause-shell">
+      <section class="pause-card" aria-labelledby="pauseTitle">
+        <div class="pause-mark" aria-hidden="true">
+          <span class="pause-planet"></span>
+          <span class="pause-orbit"></span>
+          <span class="pause-moon"></span>
+        </div>
+
+        <p class="eyebrow">A gentle check-in</p>
+        <h1 id="pauseTitle">This site showed up again.</h1>
+        <p class="lead" id="pauseLead">
+          Saturn noticed a repeated return—not a limit you set.
+        </p>
+
+        <section class="evidence-card" aria-labelledby="evidenceTitle">
+          <div class="evidence-head">
+            <span id="evidenceTitle">What Saturn noticed</span>
+            <span class="local-badge">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10"></path></svg>
+              On this device
+            </span>
+          </div>
+          <p id="evidenceCopy">Opened repeatedly in a short window.</p>
+
+          <div class="sequence" aria-label="Observed navigation sequence">
+            <div class="sequence-step">
+              <span class="step-icon new-tab-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 9h18M7 5v4"></path></svg>
+              </span>
+              <strong>New tab</strong>
+              <small id="sequenceStartTime">A few minutes ago</small>
+            </div>
+            <span class="sequence-line"><em>opened</em></span>
+            <div class="sequence-step is-site">
+              <span class="step-icon" id="siteInitial" aria-hidden="true">S</span>
+              <strong id="sequenceSiteLabel">This site</strong>
+              <small>quick visit</small>
+            </div>
+            <span class="sequence-line is-return"><em id="returnDelay">again</em></span>
+            <div class="sequence-step is-return">
+              <span class="step-icon return-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M7 8H3v-4"></path><path d="M3.5 8.5a8 8 0 1 1-.6 6.5"></path></svg>
+              </span>
+              <strong>Back again</strong>
+              <small id="sequenceReturnTime">just now</small>
+            </div>
+          </div>
+        </section>
+
+        <div class="rule-chip">
+          <span class="status-dot"></span>
+          <span id="ruleMode">Pattern pause · Today only</span>
+        </div>
+
+        <div class="actions">
+          <button class="primary-action" id="continueBtn" type="button">
+            Continue to this site
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M14 7l5 5-5 5"></path></svg>
+          </button>
+          <button class="secondary-action" id="closeTabBtn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"></path></svg>
+            Close this tab
+          </button>
+        </div>
+
+        <button class="disable-action" id="disableBtn" type="button">
+          Don’t pause this pattern again
+        </button>
+        <p class="fine-print">
+          This is a suggestion, not a limit. Continuing won’t change your settings.
+        </p>
+        <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+
+    <script src="pattern-pauses.js"></script>
+    <script src="pattern-pause.js"></script>
+  </body>
+</html>

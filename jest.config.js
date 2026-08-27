@@ -3,11 +3,12 @@ module.exports = {
     testMatch: ['**/tests/**/*.test.js', '**/?(*.)+(spec|test).js'],
     collectCoverageFrom: [
         'background.js',
-        'popup.js',
         'blocked.js',
+        'gdpr-utils.js',
         'shared-extension-utils.js',
         '!node_modules/**'
     ],
+    // popup.js is a browser entrypoint covered by the Playwright suite.
     coverageThreshold: {
         global: {
             branches: 40,
@@ -24,5 +25,5 @@ module.exports = {
     transform: {},
     testTimeout: 10000
     ,
-    testPathIgnorePatterns: ['/e2e/']
+    testPathIgnorePatterns: ['/e2e/', '/server/', '/worker/']
 };

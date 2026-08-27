@@ -115,9 +115,9 @@ function insightMockUsageData() {
     };
 }
 
-async function installPopupChromeMock(page, overrides = {}) {
+async function installPopupChromeMock(page, overrides = {}, runtimeOptions = {}) {
     const insightsSource = fs.readFileSync(path.join(process.cwd(), 'insights.js'), 'utf8');
-    await page.addInitScript(({ today, overrides, insightsSource }) => {
+    await page.addInitScript(({ today, overrides, insightsSource, runtimeOptions }) => {
         window.eval(insightsSource);
         const listeners = [];
         const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
@@ -127,6 +127,7 @@ async function installPopupChromeMock(page, overrides = {}) {
                 use24HourTime: false,
                 limitNotificationsEnabled: true,
                 personalInsightsEnabled: true,
+                patternPausesEnabled: true,
                 insightNotificationsEnabled: true,
                 insightMaxNotificationsPerDay: 1,
                 insightSensitivity: 'normal'
@@ -163,6 +164,10 @@ async function installPopupChromeMock(page, overrides = {}) {
             },
             personalInsights: [],
             dismissedInsights: {},
+            behaviorHistory: {},
+            patternPauseRules: {},
+            patternPauseHistory: { events: [], byRule: {} },
+            patternPauseDismissals: {},
             activeBlocks: [],
             scheduledBlocks: [],
             premiumState: { active: false, planName: 'Free' },
@@ -266,8 +271,72 @@ async function installPopupChromeMock(page, overrides = {}) {
                         emitStorageChanges({ dismissedInsights, personalInsights });
                         return { success: true, id };
                     }
+                    if (message?.action === 'enablePatternPause') {
+                        const normalized = normalizeDomain(message.domain);
+                        const now = Date.now();
+                        const rule = {
+                            id: `pattern:${normalized}`,
+                            domain: normalized,
+                            enabled: true,
+                            mode: message.mode === 'ongoing' ? 'ongoing' : 'today',
+                            createdAt: now,
+                            updatedAt: now,
+                            expiresAt: message.mode === 'ongoing' ? 0 : now + 12 * 60 * 60 * 1000,
+                            thresholdVisits: Number(message.thresholdVisits || 3),
+                            windowMinutes: Number(message.windowMinutes || 30),
+                            minSignals: 1,
+                            cooldownMinutes: 5,
+                            bypassMinutes: 10,
+                            sourceInsightType: message.sourceInsightType || 'behavior_pattern',
+                            lastTriggeredAt: 0,
+                            lastOutcomeAt: 0
+                        };
+                        emitStorageChanges({
+                            patternPauseRules: { ...(data.patternPauseRules || {}), [normalized]: rule },
+                            patternPauseDismissals: {
+                                ...(data.patternPauseDismissals || {}),
+                                [normalized]: undefined
+                            }
+                        });
+                        return { success: true, rule };
+                    }
+                    if (message?.action === 'updatePatternPauseRule') {
+                        const normalized = normalizeDomain(message.domain);
+                        const current = data.patternPauseRules?.[normalized];
+                        if (!current) return { success: false, error: 'Pattern pause not found.' };
+                        const rule = {
+                            ...current,
+                            ...(typeof message.enabled === 'boolean' ? { enabled: message.enabled } : {}),
+                            ...(message.mode ? { mode: message.mode } : {}),
+                            ...(message.thresholdVisits != null ? { thresholdVisits: Number(message.thresholdVisits) } : {}),
+                            ...(message.windowMinutes != null ? { windowMinutes: Number(message.windowMinutes) } : {}),
+                            updatedAt: Date.now()
+                        };
+                        emitStorageChanges({
+                            patternPauseRules: { ...(data.patternPauseRules || {}), [normalized]: rule }
+                        });
+                        return { success: true, rule };
+                    }
+                    if (message?.action === 'dismissPatternPauseSuggestion') {
+                        const normalized = normalizeDomain(message.domain);
+                        emitStorageChanges({
+                            patternPauseDismissals: {
+                                ...(data.patternPauseDismissals || {}),
+                                [normalized]: { dismissedAt: Date.now(), until: Date.now() + 12 * 60 * 60 * 1000 }
+                            }
+                        });
+                        return { success: true };
+                    }
                     return { success: true };
                 }
+            },
+            management: {
+                getSelf: async () => ({
+                    id: 'mock-extension-id',
+                    installType: runtimeOptions.installType || 'development',
+                    enabled: true,
+                    type: 'extension'
+                })
             },
             storage: {
                 local: {
@@ -297,7 +366,7 @@ async function installPopupChromeMock(page, overrides = {}) {
             },
             alarms: { clear: async () => true }
         };
-    }, { today: dayKey(), overrides, insightsSource });
+    }, { today: dayKey(), overrides, insightsSource, runtimeOptions });
 }
 
 test('storage updates from active website flush do not trap popup in a refresh loop', async ({ page }) => {
@@ -470,6 +539,491 @@ test('popup dashboard actions add limits, end pauses, and switch hourly bars', a
     await expect.poll(() => page.evaluate(() => window.__popupData.blockedDomains['alpha.com']?.limitSeconds)).toBe(1800);
     await expect(page.locator('#tab1')).toBeChecked();
     await expect(page.locator('#limitList')).toContainText('alpha.com');
+});
+
+test('pattern pause moves from evidence to trigger tuning and outcome review', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 24 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 24 * minute + 300 },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 22 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 22 * minute + 300 },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 20 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 20 * minute + 300 },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 18 * minute },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 16 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 16 * minute + 300 },
+        { type: 'navigation_visit', domain: 'docs.google.com', timestamp: now - 8 * minute },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 5 * minute },
+        { type: 'navigation_visit', domain: 'notion.so', timestamp: now - 2 * minute },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now }
+    ];
+    await installPopupChromeMock(page, {
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+    await expect(page.locator('#patternPauseExperience')).toBeVisible();
+    await expect(page.locator('#patternPauseSuggestionView')).toBeVisible();
+    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'pattern-pause');
+    await expect(page.locator('#p1 > .today-card')).toBeHidden();
+    await expect(page.locator('#streakHeader')).toBeVisible();
+    await expect(page.locator('#upgradeBtnHeader')).toBeVisible();
+    await expect(page.locator('#p1 > .journey-card')).toBeVisible();
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before Instagram?'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('7 times');
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'new-tab');
+    await expect(page.locator('#patternOriginCount')).toHaveText('4 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('from a new tab');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node')).toHaveCount(5);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-icon img')).toHaveCount(5);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-icon.has-favicon')).toHaveCount(5);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node small')).toHaveText([
+        'instagram.com',
+        'docs.google.com',
+        'instagram.com',
+        'notion.so',
+        'instagram.com'
+    ]);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'new tab',
+        'switched',
+        'existing tab',
+        'switched',
+        'existing tab'
+    ]);
+    const arrowGeometry = await page.evaluate(() => {
+        const timeline = document.querySelector('.pattern-timeline');
+        const targets = Array.from(
+            timeline.querySelectorAll('.pattern-site-node.is-target .pattern-site-node-icon')
+        );
+        const arcs = Array.from(document.querySelectorAll('#patternReturnArcs .pattern-return-arc'));
+        const timelineBox = timeline.getBoundingClientRect();
+        return {
+            targetCount: targets.length,
+            arcCount: arcs.length,
+            pairs: arcs.map((arc, index) => {
+                const startIcon = targets[index].getBoundingClientRect();
+                const endIcon = targets[index + 1].getBoundingClientRect();
+                const startNode = targets[index].closest('.pattern-site-node').getBoundingClientRect();
+                const arcBox = arc.getBoundingClientRect();
+                return {
+                    startCenter: startIcon.left + startIcon.width / 2,
+                    endCenter: endIcon.left + endIcon.width / 2,
+                    arcLeft: arcBox.left,
+                    arcRight: arcBox.right,
+                    arcTop: arcBox.top,
+                    startNodeBottom: startNode.bottom,
+                    contained: arcBox.left >= timelineBox.left && arcBox.right <= timelineBox.right
+                };
+            })
+        };
+    });
+    expect(arrowGeometry.targetCount).toBe(3);
+    expect(arrowGeometry.arcCount).toBe(2);
+    arrowGeometry.pairs.forEach((pair) => {
+        expect(Math.abs(pair.arcLeft - pair.startCenter)).toBeLessThan(2);
+        expect(Math.abs(pair.arcRight - pair.endCenter)).toBeLessThan(2);
+        expect(pair.arcTop).toBeGreaterThan(pair.startNodeBottom);
+        expect(pair.contained).toBe(true);
+    });
+
+    const dashboardSlotGeometry = await page.evaluate(() => {
+        const pattern = document.querySelector('#patternPauseExperience').getBoundingClientRect();
+        const journey = document.querySelector('#p1 > .journey-card').getBoundingClientRect();
+        const preservedCards = [
+            '.journey-card',
+            '.ranking-card',
+            '.visits-card',
+            '.usage-card'
+        ];
+        return {
+            patternTop: pattern.top,
+            patternBottom: pattern.bottom,
+            journeyTop: journey.top,
+            allPreserved: preservedCards.every((selector) =>
+                getComputedStyle(document.querySelector(`#p1 > ${selector}`)).display !== 'none'
+            )
+        };
+    });
+    expect(dashboardSlotGeometry.patternTop).toBeGreaterThan(0);
+    expect(dashboardSlotGeometry.journeyTop).toBeGreaterThanOrEqual(
+        dashboardSlotGeometry.patternBottom + 9
+    );
+    expect(dashboardSlotGeometry.allPreserved).toBe(true);
+
+    const integratedStyles = await page.evaluate(() => {
+        const observation = document.querySelector('.pattern-observation-card');
+        const suggestion = document.querySelector('.pattern-suggestion-panel');
+        const heading = document.querySelector('.pattern-attention-heading h1');
+        const subtitle = document.querySelector('.pattern-attention-heading p');
+        const primary = document.querySelector('#enablePatternPauseBtn');
+        const secondary = document.querySelector('#dismissPatternPauseBtn');
+        return {
+            observationRadius: getComputedStyle(observation).borderRadius,
+            suggestionRadius: getComputedStyle(suggestion).borderRadius,
+            suggestionBorderTop: getComputedStyle(suggestion).borderTopWidth,
+            suggestionBackground: getComputedStyle(suggestion).backgroundImage,
+            combinedCard: suggestion.parentElement === observation,
+            disclaimerCount: document.querySelectorAll('.pattern-privacy-note').length,
+            headingFont: getComputedStyle(heading).fontFamily,
+            headingSize: getComputedStyle(heading).fontSize,
+            subtitleColor: getComputedStyle(subtitle).color,
+            primaryWidth: primary.getBoundingClientRect().width,
+            primaryHeight: primary.getBoundingClientRect().height,
+            primaryRadius: getComputedStyle(primary).borderRadius,
+            secondaryWidth: secondary.getBoundingClientRect().width
+        };
+    });
+    expect(integratedStyles.observationRadius).toBe('20px');
+    expect(integratedStyles.suggestionRadius).toBe('0px');
+    expect(integratedStyles.suggestionBorderTop).toBe('1px');
+    expect(integratedStyles.suggestionBackground).toBe('none');
+    expect(integratedStyles.combinedCard).toBe(true);
+    expect(integratedStyles.disclaimerCount).toBe(0);
+    expect(integratedStyles.headingFont).toContain('Inter');
+    expect(integratedStyles.headingSize).toBe('22px');
+    expect(integratedStyles.subtitleColor).toBe('rgb(143, 217, 227)');
+    expect(integratedStyles.primaryWidth).toBe(120);
+    expect(integratedStyles.primaryHeight).toBe(30);
+    expect(integratedStyles.primaryRadius).toBe('9px');
+    expect(integratedStyles.secondaryWidth).toBe(98);
+
+    await page.locator('#adjustPatternPauseBtn').click();
+    await expect(page.locator('#patternTriggerOverlay')).toBeVisible();
+    await page.locator('.pattern-trigger-option', {
+        hasText: 'After 5 visits in 30 minutes'
+    }).click();
+    await page.locator('#savePatternTriggerBtn').click();
+    await expect(page.locator('#patternPauseFeedback')).toContainText(
+        '5 visits in 30 minutes'
+    );
+
+    await page.locator('#enablePatternPauseBtn').click();
+    await expect(page.locator('#patternPauseReviewView')).toBeVisible();
+    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'pattern-pause-review');
+    await expect(page.locator('#patternReviewTitle')).toHaveText(
+        'Instagram pattern pause'
+    );
+    await expect(page.locator('#patternTriggerCopy')).toContainText(
+        '5 repeated visits within 30 minutes'
+    );
+    await expect.poll(() => page.evaluate(() => (
+        window.__popupData.patternPauseRules['instagram.com']?.thresholdVisits
+    ))).toBe(5);
+
+    await page.evaluate(async () => {
+        const ruleId = window.__popupData.patternPauseRules['instagram.com'].id;
+        const at = Date.now();
+        await chrome.storage.local.set({
+            patternPauseHistory: {
+                byRule: {
+                    [ruleId]: { shown: 3, continued: 2, closed: 1, lastAt: at }
+                },
+                events: [
+                    { ruleId, domain: 'instagram.com', type: 'continued', timestamp: at - 120000 },
+                    { ruleId, domain: 'instagram.com', type: 'closed', timestamp: at - 60000 },
+                    { ruleId, domain: 'instagram.com', type: 'continued', timestamp: at }
+                ]
+            }
+        });
+    });
+    await expect(page.locator('#patternShownCount')).toHaveText('3');
+    await expect(page.locator('#patternContinuedCount')).toHaveText('2');
+    await expect(page.locator('#patternClosedCount')).toHaveText('1');
+    await expect(page.locator('#patternOutcomeRail')).toContainText('Closed tab');
+
+    await page.locator('#keepPatternPauseBtn').click();
+    await expect(page.locator('#patternReviewStatus')).toContainText(
+        'Continues until you turn it off'
+    );
+    await page.locator('#turnOffPatternPauseBtn').click();
+    await expect(page.locator('#patternPauseExperience')).toBeHidden();
+    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'daily');
+    await expect(page.locator('#p1 .today-card')).toBeVisible();
+});
+
+test('pattern summary compresses a homogeneous new-tab loop', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [20, 16, 12, 8, 4, 1].flatMap((minutesAgo) => {
+        const timestamp = now - minutesAgo * minute;
+        return [
+            { type: 'navigation_visit', domain: 'youtube.com', timestamp },
+            { type: 'new_tab_quick_nav', domain: 'youtube.com', timestamp: timestamp + 300 }
+        ];
+    });
+    await installPopupChromeMock(page, {
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before YouTube?'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('6 times');
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'new-tab');
+    await expect(page.locator('#patternOriginCount')).toHaveText('6 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('from a new tab');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node')).toHaveCount(3);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node small')).toHaveText([
+        'youtube.com',
+        'youtube.com',
+        'youtube.com'
+    ]);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'new tab',
+        'new tab',
+        'new tab'
+    ]);
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(2);
+});
+
+test('pattern summary describes returns after closing a tab', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [
+        { type: 'navigation_visit', domain: 'reddit.com', timestamp: now - 18 * minute },
+        { type: 'return_after_close', domain: 'reddit.com', timestamp: now - 18 * minute + 300 },
+        { type: 'navigation_visit', domain: 'docs.google.com', timestamp: now - 12 * minute },
+        { type: 'navigation_visit', domain: 'reddit.com', timestamp: now - 9 * minute },
+        { type: 'return_after_close', domain: 'reddit.com', timestamp: now - 9 * minute + 300 },
+        { type: 'navigation_visit', domain: 'mail.google.com', timestamp: now - 4 * minute },
+        { type: 'navigation_visit', domain: 'reddit.com', timestamp: now - minute }
+    ];
+    await installPopupChromeMock(page, {
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before Reddit?'
+    );
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'after-close');
+    await expect(page.locator('#patternOriginCount')).toHaveText('2 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('after closing a tab');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node small')).toHaveText([
+        'reddit.com',
+        'docs.google.com',
+        'reddit.com',
+        'gmail.com',
+        'reddit.com'
+    ]);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'reopened',
+        'switched',
+        'reopened',
+        'switched',
+        'existing tab'
+    ]);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-icon.has-favicon')).toHaveCount(5);
+    await expect(page.locator('#patternTimelineTrack img[data-pattern-domain="reddit.com"]').first()).toHaveAttribute(
+        'src',
+        /assets\/site-icons\/reddit\.svg$/
+    );
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(2);
+});
+
+test('pattern summary describes interspersed visits from existing tabs', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [
+        { type: 'navigation_visit', domain: 'notion.so', timestamp: now - 24 * minute },
+        { type: 'navigation_visit', domain: 'docs.google.com', timestamp: now - 20 * minute },
+        { type: 'navigation_visit', domain: 'notion.so', timestamp: now - 16 * minute },
+        { type: 'navigation_visit', domain: 'mail.google.com', timestamp: now - 12 * minute },
+        { type: 'navigation_visit', domain: 'notion.so', timestamp: now - 8 * minute },
+        { type: 'navigation_visit', domain: 'youtube.com', timestamp: now - 4 * minute },
+        { type: 'navigation_visit', domain: 'notion.so', timestamp: now - minute }
+    ];
+    await installPopupChromeMock(page, {
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before Notion?'
+    );
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'existing-tab');
+    await expect(page.locator('#patternOriginCount')).toHaveText('4 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('from existing tabs');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'existing tab',
+        'switched',
+        'existing tab',
+        'switched',
+        'existing tab'
+    ]);
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(2);
+});
+
+test('unpacked build previews dynamic Pattern Pause scenarios without mutating live data', async ({ page }) => {
+    const consoleErrors = [];
+    page.on('console', (message) => {
+        if (message.type() === 'error') consoleErrors.push(message.text());
+    });
+    await installPopupChromeMock(page, {
+        uiSettings: { patternPausesEnabled: false }
+    });
+    await page.setViewportSize({ width: 560, height: 570 });
+    await page.goto(popupUrl());
+    await expect(page).toHaveTitle(/Saturn/i);
+
+    await page.locator('#settingsCogBtn').click();
+    await expect(page.locator('#patternPreviewSettingsCard')).toBeVisible();
+    await page.locator('#launchPatternPreviewBtn').click();
+
+    await expect(page.locator('#patternPreviewToolbar')).toBeVisible();
+    await expect(page.locator('#settingsOverlay')).toBeHidden();
+    await expect(page.locator('#patternPreviewScenarioSelect')).toHaveValue('mixed');
+    await expect(page.locator('#p1')).toHaveAttribute(
+        'data-summary-scenario',
+        'pattern-pause-preview-mixed'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('4 times');
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'new-tab');
+    await expect(page.locator('#patternOriginCount')).toHaveText('2 visits');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'existing tab',
+        'switched',
+        'reopened',
+        'switched',
+        'new tab'
+    ]);
+    const previewLayout = await page.evaluate(() => {
+        const toolbar = document.querySelector('#patternPreviewToolbar').getBoundingClientRect();
+        const card = document.querySelector('.pattern-observation-card').getBoundingClientRect();
+        return {
+            horizontalOverflow:
+                document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            toolbarInsideViewport: toolbar.left >= 0 && toolbar.right <= window.innerWidth,
+            cardInsideViewport: card.left >= 0 && card.right <= window.innerWidth,
+            spacing: card.top - toolbar.bottom
+        };
+    });
+    expect(previewLayout.horizontalOverflow).toBeLessThanOrEqual(1);
+    expect(previewLayout.toolbarInsideViewport).toBe(true);
+    expect(previewLayout.cardInsideViewport).toBe(true);
+    expect(previewLayout.spacing).toBeGreaterThanOrEqual(7);
+
+    await page.locator('#patternPreviewScenarioSelect').selectOption('new-tab');
+    await expect(page.locator('#p1')).toHaveAttribute(
+        'data-summary-scenario',
+        'pattern-pause-preview-new-tab'
+    );
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before YouTube?'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('6 times');
+    await expect(page.locator('#patternOriginCount')).toHaveText('6 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('from a new tab');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node')).toHaveCount(3);
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(2);
+
+    await page.locator('#patternPreviewScenarioSelect').selectOption('existing-tab');
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before Instagram?'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('4 times');
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'existing-tab');
+    await expect(page.locator('#patternOriginCount')).toHaveText('4 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('from existing tabs');
+
+    await page.locator('#patternPreviewScenarioSelect').selectOption('single-return');
+    await expect(page.locator('#p1')).toHaveAttribute(
+        'data-summary-scenario',
+        'pattern-pause-preview-single-return'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('4 times');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node small')).toHaveText([
+        'notion.so',
+        'youtube.com',
+        'instagram.com',
+        'docs.google.com',
+        'instagram.com'
+    ]);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'switched',
+        'switched',
+        'existing tab',
+        'switched',
+        'existing tab'
+    ]);
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(1);
+    const timelineType = await page.evaluate(() => {
+        const timeline = document.querySelector('.pattern-timeline');
+        const icon = document.querySelector('.pattern-site-node-icon');
+        const domain = document.querySelector('.pattern-site-node small');
+        const action = document.querySelector('.pattern-site-node-action');
+        const time = document.querySelector('.pattern-site-node time');
+        return {
+            timelineHeight: timeline.getBoundingClientRect().height,
+            iconSize: icon.getBoundingClientRect().width,
+            domainFontSize: parseFloat(getComputedStyle(domain).fontSize),
+            actionFontSize: parseFloat(getComputedStyle(action).fontSize),
+            timeFontSize: parseFloat(getComputedStyle(time).fontSize)
+        };
+    });
+    expect(timelineType.timelineHeight).toBeGreaterThanOrEqual(142);
+    expect(timelineType.iconSize).toBe(38);
+    expect(timelineType.domainFontSize).toBeGreaterThanOrEqual(10);
+    expect(timelineType.actionFontSize).toBeGreaterThanOrEqual(9.5);
+    expect(timelineType.timeFontSize).toBeGreaterThanOrEqual(9);
+    await page.locator('#patternPreviewScenarioSelect').selectOption('reopen');
+    await expect(page.locator('#patternSuggestionHeading')).toHaveText(
+        'Add a gentle check-in before Reddit?'
+    );
+    await expect(page.locator('#patternVisitCount')).toHaveText('3 times');
+    await expect(page.locator('#patternOriginStat')).toHaveAttribute('data-pattern-origin', 'after-close');
+    await expect(page.locator('#patternOriginCount')).toHaveText('3 visits');
+    await expect(page.locator('#patternOriginCopy')).toHaveText('after closing a tab');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-action > span')).toHaveText([
+        'reopened',
+        'reopened',
+        'reopened'
+    ]);
+    await expect(page.locator('#patternTimelineTrack img[data-pattern-domain="reddit.com"]').first()).toHaveAttribute(
+        'src',
+        /assets\/site-icons\/reddit\.svg$/
+    );
+    await expect(page.locator('#patternReturnArcs .pattern-return-arc')).toHaveCount(2);
+    await page.locator('#enablePatternPauseBtn').click();
+    await expect(page.locator('#patternPauseFeedback')).toContainText('no rule was created');
+    await page.locator('#dismissPatternPauseBtn').click();
+    await expect(page.locator('#patternPauseFeedback')).toContainText('compare another scenario');
+    await expect.poll(() => page.evaluate(() => window.__popupMessages.filter(
+        (message) => ['enablePatternPause', 'dismissPatternPauseSuggestion'].includes(message.action)
+    ).length)).toBe(0);
+    await expect.poll(() => page.evaluate(() => Object.keys(window.__popupData.patternPauseRules).length)).toBe(0);
+    await expect.poll(() => page.evaluate(() => Object.keys(window.__popupData.patternPauseDismissals).length)).toBe(0);
+
+    await page.locator('#exitPatternPreviewBtn').click();
+    await expect(page.locator('#patternPreviewToolbar')).toBeHidden();
+    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'daily');
+    await expect(page.locator('#p1 > .today-card')).toBeVisible();
+    expect(consoleErrors).toEqual([]);
+});
+
+test('published install hides and rejects developer scenario preview', async ({ page }) => {
+    await installPopupChromeMock(page, {}, { installType: 'normal' });
+    await page.goto(popupUrl());
+
+    await page.locator('#settingsCogBtn').click();
+    await expect(page.locator('#patternPreviewSettingsCard')).toBeHidden();
+    await page.locator('#launchPatternPreviewBtn').evaluate((button) => button.click());
+    await expect(page.locator('#patternPreviewToolbar')).toBeHidden();
+    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'daily');
 });
 
 test('fresh install with no usage history does not show insights', async ({ page }) => {

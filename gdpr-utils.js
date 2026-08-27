@@ -12,8 +12,14 @@ const GdprUtils = (() => {
         "activeBlocks",
         "snoozedDomains",
         "snoozeHistory",
+        "behaviorHistory",
+        "patternPauseRules",
+        "patternPauseHistory",
+        "patternPauseDismissals",
+        "patternPauseBypasses",
         "statsHistory",
         "recentlyReset",
+        "activeSession",
         "personalInsights",
         "dismissedInsights",
         "insightNotificationHistory",
@@ -23,10 +29,20 @@ const GdprUtils = (() => {
         "onboardingState",
         "onboardingMetrics",
         "uiSettings",
+        "saturnBlockReclaimStats",
+        "saturnJourneyDisplayState",
+        "activationFunnelState",
+        "reviewPromptState",
+        "postInstallRedirectMeta",
+        "enforceIntervalSec",
+        "browserFocusState",
+        "immutableAdminOverrideEnabled",
+        "immutableAdminOverrideLastUsedDay",
         "premiumState",
         "whopAccessToken",
         "whopPendingToken",
         "whopLinkState",
+        "whopActivationNotice",
         "analyticsClientId",
         "analyticsInstallTimestampMs",
         "analyticsLastActiveDay",
@@ -39,9 +55,16 @@ const GdprUtils = (() => {
         "allStatsToday",
         "hourlyUsageHistory",
         "snoozeHistory",
+        "behaviorHistory",
+        "patternPauseHistory",
+        "patternPauseDismissals",
+        "patternPauseBypasses",
         "statsHistory",
         "alertsSent",
         "recentlyReset",
+        "activeSession",
+        "saturnBlockReclaimStats",
+        "saturnJourneyDisplayState",
         "personalInsights",
         "dismissedInsights",
         "insightNotificationHistory",
@@ -67,7 +90,7 @@ const GdprUtils = (() => {
         return {
             exportedAt: new Date().toISOString(),
             extensionVersion: chrome.runtime?.getManifest?.().version || "unknown",
-            data: await storage().get(DATA_KEYS)
+            data: await storage().get(null)
         };
     }
 
@@ -109,6 +132,10 @@ const GdprUtils = (() => {
 
     async function deleteAllUserData(confirmDelete = false) {
         if (!confirmDelete) throw new Error("Data deletion requires confirmation");
+        if (typeof storage().clear === "function") {
+            await storage().clear();
+            return true;
+        }
         return removeKeys(DATA_KEYS);
     }
 

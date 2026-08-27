@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Interactive Saturn concept for gentle, pattern-aware browsing pauses."
+    />
+    <title>Saturn Pattern Pause Concept</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <svg class="svg-defs" aria-hidden="true">
+      <symbol id="icon-orbit" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4.4"></circle>
+        <path d="M3.1 13.9c1.2 3.4 6.2 4.8 11.3 3.1 5.1-1.7 8.2-5.8 7-9.2-1.2-3.4-6.2-4.8-11.3-3.1"></path>
+        <circle class="fill-current" cx="5.2" cy="9" r="1.35"></circle>
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5"></circle>
+        <path d="M12 7.5V12l3.2 2"></path>
+      </symbol>
+      <symbol id="icon-tab" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+        <path d="M3 9h18M7 5v4"></path>
+      </symbol>
+      <symbol id="icon-lock" viewBox="0 0 24 24">
+        <rect x="5" y="10" width="14" height="10" rx="2"></rect>
+        <path d="M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10"></path>
+      </symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="M9.5 8.5v7M14.5 8.5v7"></path>
+      </symbol>
+      <symbol id="icon-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h13M14 7l5 5-5 5"></path>
+      </symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24">
+        <path d="m7 7 10 10M17 7 7 17"></path>
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="m8 12 2.6 2.7L16.5 9"></path>
+      </symbol>
+      <symbol id="icon-sliders" viewBox="0 0 24 24">
+        <path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path>
+        <circle cx="15" cy="7" r="2"></circle>
+        <circle cx="9" cy="17" r="2"></circle>
+      </symbol>
+    </svg>
+
+    <div class="concept-shell">
+      <header class="concept-header">
+        <a class="concept-brand" href="#" aria-label="Saturn pattern pause concept home">
+          <img src="../../assets/planets/saturn-app-icon-128.png" alt="" />
+          <span>Saturn</span>
+        </a>
+        <div class="concept-title">
+          <strong>Pattern Pause</strong>
+          <span>Interactive workflow concept</span>
+        </div>
+        <button class="reset-button" id="resetDemo" type="button">Reset demo</button>
+      </header>
+
+      <main class="concept-main">
+        <nav class="workflow-nav" aria-label="Pattern pause workflow">
+          <button class="workflow-step is-active" data-step="detect" type="button">
+            <span class="step-index">01</span>
+            <span><strong>Detect</strong><small>Surface the evidence</small></span>
+          </button>
+          <span class="step-connector" aria-hidden="true"></span>
+          <button class="workflow-step" data-step="pause" type="button">
+            <span class="step-index">02</span>
+            <span><strong>Pause</strong><small>Make the return visible</small></span>
+          </button>
+          <span class="step-connector" aria-hidden="true"></span>
+          <button class="workflow-step" data-step="review" type="button">
+            <span class="step-index">03</span>
+            <span><strong>Review</strong><small>Keep control of the rule</small></span>
+          </button>
+        </nav>
+
+        <section class="prototype-area" aria-live="polite">
+          <div class="stage-toolbar">
+            <div>
+              <span class="stage-kicker" id="stageKicker">Stage 1 · Extension popup</span>
+              <h1 id="stageTitle">Turn a detected pattern into a choice</h1>
+            </div>
+            <div class="stage-status">
+              <span class="status-dot"></span>
+              <span id="stageStatus">Prototype ready</span>
+            </div>
+          </div>
+
+          <div class="stage-frame" id="stageFrame">
+            <section class="prototype-state is-visible" id="detectState" data-state="detect">
+              <div class="extension-popup">
+                <header class="saturn-header">
+                  <div class="saturn-lockup">
+                    <img src="../../assets/planets/saturn-app-icon-128.png" alt="" />
+                    <div><strong>SATURN</strong><span>Your time. Your universe.</span></div>
+                  </div>
+                  <div class="active-count"><span></span>2 active</div>
+                </header>
+                <nav class="saturn-tabs" aria-label="Extension tabs">
+                  <button class="is-selected" type="button">Dashboard</button>
+                  <button type="button">Limits</button>
+                  <button type="button">Schedule</button>
+                  <button type="button">Profile</button>
+                </nav>
+
+                <div class="detect-content">
+                  <div class="detect-heading">
+                    <svg><use href="#icon-orbit"></use></svg>
+                    <div>
+                      <h2>Your attention today</h2>
+                      <p>Saturn noticed a repeated pattern—not a rule you set.</p>
+                    </div>
+                  </div>
+
+                  <div class="evidence-summary">
+                    <div>
+                      <svg><use href="#icon-clock"></use></svg>
+                      <span>Opened <strong>7 times</strong> in 24 minutes</span>
+                    </div>
+                    <div>
+                      <svg><use href="#icon-tab"></use></svg>
+                      <span><strong>4 visits</strong> started from a new tab</span>
+                    </div>
+                  </div>
+
+                  <div class="pattern-rail" aria-label="Recent browsing sequence">
+                    <div class="rail-label">Recent sequence</div>
+                    <div class="rail-items">
+                      <div class="site-node neutral"><span>G</span><small>Docs</small></div>
+                      <span class="rail-line"><em>2m</em></span>
+                      <div class="site-node instagram"><span>◎</span><small>Instagram</small></div>
+                      <span class="rail-line"><em>3m</em></span>
+                      <div class="site-node neutral"><span>N</span><small>Notion</small></div>
+                      <span class="rail-line is-return"><em>2m</em></span>
+                      <div class="site-node instagram"><span>◎</span><small>Instagram</small></div>
+                    </div>
+                    <div class="return-arc" aria-hidden="true"><span></span></div>
+                  </div>
+
+                  <div class="suggestion-panel" id="suggestionPanel">
+                    <div class="suggestion-copy">
+                      <div class="suggestion-label">
+                        <svg><use href="#icon-pause"></use></svg>
+                        <span>Suggested pause</span>
+                      </div>
+                      <h3>Add a gentle check-in before Instagram?</h3>
+                      <p>
+                        For the rest of today, Saturn can pause when this pattern repeats.
+                        You can continue in one click.
+                      </p>
+                    </div>
+                    <div class="suggestion-actions">
+                      <button class="button-primary" id="enablePause" type="button">Turn on for today</button>
+                      <button class="button-secondary" id="dismissSuggestion" type="button">Not now</button>
+                      <button class="button-link" data-open-trigger type="button">Adjust trigger</button>
+                    </div>
+                  </div>
+                  <p class="privacy-note"><svg><use href="#icon-lock"></use></svg>Based on activity stored on this device.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="prototype-state" id="pauseState" data-state="pause">
+              <div class="interruption-page">
+                <div class="ambient-orbit orbit-one"></div>
+                <div class="ambient-orbit orbit-two"></div>
+                <article class="interruption-card">
+                  <div class="interruption-mark">
+                    <img src="../../assets/planets/saturn-app-icon-128.png" alt="Saturn" />
+                    <div class="orbit-route"><i></i><span><svg><use href="#icon-pause"></use></svg></span></div>
+                  </div>
+                  <h2>Instagram showed up again.</h2>
+                  <p class="interruption-lede">
+                    You’ve opened it 7 times in the last 24 minutes—often from a new tab or between other sites.
+                  </p>
+                  <div class="mini-sequence" aria-label="Detected return pattern">
+                    <div><svg><use href="#icon-tab"></use></svg><span>New tab</span></div>
+                    <svg class="sequence-arrow"><use href="#icon-arrow"></use></svg>
+                    <div><span class="mini-instagram">◎</span><span>instagram.com</span></div>
+                    <svg class="sequence-arrow"><use href="#icon-arrow"></use></svg>
+                    <div><svg><use href="#icon-clock"></use></svg><span>Back again<small>3 min later</small></span></div>
+                  </div>
+                  <div class="pattern-label">Pattern pause <span>·</span> Today only</div>
+                  <div class="interruption-actions">
+                    <button class="button-primary button-large" id="continueInstagram" type="button">
+                      Continue to Instagram <svg><use href="#icon-arrow"></use></svg>
+                    </button>
+                    <button class="button-secondary button-large" id="closeTab" type="button">Close this tab</button>
+                    <button class="button-link" id="disablePattern" type="button">Don’t pause this pattern again</button>
+                  </div>
+                  <p class="interruption-footnote">
+                    This is a suggestion, not a limit. Continuing won’t change your settings.
+                  </p>
+                </article>
+              </div>
+            </section>
+
+            <section class="prototype-state" id="reviewState" data-state="review">
+              <div class="extension-popup review-popup">
+                <header class="saturn-header">
+                  <div class="saturn-lockup">
+                    <img src="../../assets/planets/saturn-app-icon-128.png" alt="" />
+                    <div><strong>SATURN</strong><span>Your time. Your universe.</span></div>
+                  </div>
+                  <div class="active-count"><span></span>3 active</div>
+                </header>
+                <nav class="saturn-tabs" aria-label="Extension tabs">
+                  <button class="is-selected" type="button">Dashboard</button>
+                  <button type="button">Limits</button>
+                  <button type="button">Schedule</button>
+                  <button type="button">Profile</button>
+                </nav>
+
+                <div class="review-content">
+                  <div class="review-title-row">
+                    <div>
+                      <h2>Instagram pattern pause</h2>
+                      <p id="pauseStatusText">On for today · Ends at midnight</p>
+                    </div>
+                    <button class="toggle is-on" id="pauseToggle" type="button" role="switch" aria-checked="true" aria-label="Pattern pause enabled">
+                      <span></span>
+                    </button>
+                  </div>
+
+                  <section class="outcome-section">
+                    <h3>What happened</h3>
+                    <div class="outcome-metrics">
+                      <div><strong>3</strong><span>check-ins shown</span></div>
+                      <div><strong id="continuedCount">2</strong><span>continued</span></div>
+                      <div><strong id="closedCount">1</strong><span>tab closed</span></div>
+                    </div>
+                    <p id="outcomeInterpretation">The pause interrupted one return without preventing access.</p>
+                  </section>
+
+                  <div class="outcome-rail">
+                    <div><span class="outcome-dot cyan">9:24 AM</span><strong>Continue</strong></div>
+                    <i></i>
+                    <div><span class="outcome-dot orange">10:02 AM</span><strong>Close tab</strong></div>
+                    <i></i>
+                    <div><span class="outcome-dot cyan">11:18 AM</span><strong>Continue</strong></div>
+                  </div>
+
+                  <section class="trigger-section">
+                    <div class="trigger-icon"><svg><use href="#icon-orbit"></use></svg></div>
+                    <div>
+                      <h3>When Saturn pauses</h3>
+                      <strong id="triggerSummary">After 3 repeated visits within 30 minutes</strong>
+                      <p>Includes quick new-tab visits and returns between other sites.</p>
+                    </div>
+                  </section>
+
+                  <div class="review-actions">
+                    <button class="button-primary" id="keepPause" type="button">
+                      <svg><use href="#icon-check"></use></svg>Keep this pattern pause
+                    </button>
+                    <button class="button-secondary" data-open-trigger type="button">
+                      <svg><use href="#icon-sliders"></use></svg>Edit trigger
+                    </button>
+                    <button class="button-link warm-link" id="turnOffPause" type="button">Turn off</button>
+                  </div>
+                  <p class="privacy-note"><svg><use href="#icon-lock"></use></svg>Pattern data stays on this device.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <aside class="concept-notes">
+          <div class="notes-intro">
+            <span>Concept principle</span>
+            <h2>Intervene at the moment of repetition, not at the first visit.</h2>
+            <p>
+              Saturn explains the evidence, asks before acting, and never turns a learned pattern into a hard limit without the user’s permission.
+            </p>
+          </div>
+          <div class="principle-list">
+            <div><span>01</span><p><strong>Transparent</strong>The user sees which signals caused the suggestion.</p></div>
+            <div><span>02</span><p><strong>Reversible</strong>Continue is always one click and there is no timer.</p></div>
+            <div><span>03</span><p><strong>Temporary first</strong>New interventions expire at midnight by default.</p></div>
+            <div><span>04</span><p><strong>Local by design</strong>The mockup keeps learned behavior on-device.</p></div>
+          </div>
+          <div class="decision-note">
+            <svg><use href="#icon-orbit"></use></svg>
+            <p><strong>Product recommendation</strong>Call this a <em>Pattern Pause</em>, not an auto-block. The name matches the actual level of friction.</p>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <dialog class="trigger-dialog" id="triggerDialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <span>Pattern sensitivity</span>
+            <h2>When should Saturn pause?</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close dialog">
+            <svg><use href="#icon-close"></use></svg>
+          </button>
+        </div>
+        <p>Choose how much repetition should happen before a check-in appears.</p>
+        <label class="trigger-option">
+          <input type="radio" name="trigger" value="3" checked />
+          <span><strong>After 3 visits in 30 minutes</strong><small>Balanced · Recommended</small></span>
+        </label>
+        <label class="trigger-option">
+          <input type="radio" name="trigger" value="5" />
+          <span><strong>After 5 visits in 30 minutes</strong><small>Fewer check-ins</small></span>
+        </label>
+        <label class="trigger-option">
+          <input type="radio" name="trigger" value="7" />
+          <span><strong>After 7 visits in 60 minutes</strong><small>Only strong patterns</small></span>
+        </label>
+        <div class="dialog-actions">
+          <button class="button-secondary" value="cancel">Cancel</button>
+          <button class="button-primary" id="saveTrigger" value="default">Save trigger</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite">
+      <svg><use href="#icon-check"></use></svg>
+      <span id="toastMessage">Pattern pause enabled for today.</span>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

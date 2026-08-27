@@ -1,5 +1,7 @@
 # Screen Time Manager General Design Guide
 
+> Current Saturn-branded surfaces should use `SATURN_BRAND_KIT.md` as the source of truth. This older light Screen Time Manager guide is retained for legacy reference only.
+
 ## 1. Brand Identity
 
 Screen Time Manager is a clean, focused productivity tool that helps users control distracting websites, understand their browsing habits, and build better digital discipline.

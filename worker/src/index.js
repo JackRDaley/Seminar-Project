@@ -170,13 +170,18 @@ async function verifyJwt(token, secret) {
 }
 
 function normalizeWhopResult(raw) {
-    const active = Boolean(
+    const rawActive =
         raw?.active ??
         raw?.isActive ??
         raw?.valid ??
         raw?.entitlement?.active ??
-        raw?.membership?.active
-    );
+        raw?.membership?.active;
+    const normalizedStatus = String(
+        raw?.status ?? raw?.membership?.status ?? raw?.entitlement?.status ?? ""
+    ).toLowerCase();
+    const active = rawActive === true || rawActive === 1 || rawActive === "1" ||
+        String(rawActive).toLowerCase() === "true" ||
+        ["active", "trialing"].includes(normalizedStatus);
 
     const planName =
         raw?.planName ??
@@ -207,6 +212,50 @@ function normalizeWhopResult(raw) {
     };
 }
 
+function firstNonEmptyId(...values) {
+    for (const value of values) {
+        const normalized = String(value || "").trim();
+        if (normalized) return normalized;
+    }
+    return "";
+}
+
+function extractWhopCompanyId(resource) {
+    return firstNonEmptyId(
+        resource?.company?.id,
+        resource?.company_id,
+        resource?.membership?.company?.id,
+        resource?.membership?.company_id,
+        resource?.payment?.company?.id,
+        resource?.payment?.company_id,
+        resource?.payment?.membership?.company?.id
+    );
+}
+
+function extractWhopProductId(resource) {
+    return firstNonEmptyId(
+        resource?.product?.id,
+        resource?.product_id,
+        resource?.membership?.product?.id,
+        resource?.membership?.product_id,
+        resource?.payment?.product?.id,
+        resource?.payment?.product_id,
+        resource?.payment?.membership?.product?.id,
+        resource?.plan?.product?.id
+    );
+}
+
+function isWhopResourceInScope(resource, env) {
+    const expectedCompanyId = String(env.WHOP_COMPANY_ID || "").trim();
+    const expectedProductId = String(env.WHOP_PRODUCT_ID || "").trim();
+    const companyId = extractWhopCompanyId(resource);
+    const productId = extractWhopProductId(resource);
+
+    if (expectedCompanyId && companyId !== expectedCompanyId) return false;
+    if (expectedProductId && productId !== expectedProductId) return false;
+    return true;
+}
+
 async function verifyWithWhopOrFallback(token, env) {
     if (env.DEV_PREMIUM_TOKEN && token === env.DEV_PREMIUM_TOKEN) {
         return {
@@ -231,8 +280,12 @@ async function verifyWithWhopOrFallback(token, env) {
 
     if (inMembershipsMode) {
         const companyId = String(env.WHOP_COMPANY_ID || "").trim();
+        const productId = String(env.WHOP_PRODUCT_ID || "").trim();
         if (!companyId) {
             throw new Error("WHOP_COMPANY_ID is required when WHOP_VERIFY_URL points to memberships endpoint");
+        }
+        if (!productId) {
+            throw new Error("WHOP_PRODUCT_ID is required when WHOP_VERIFY_URL points to memberships endpoint");
         }
 
         const statusesRaw = String(env.WHOP_ACTIVE_STATUSES || "active,trialing");
@@ -276,8 +329,7 @@ async function verifyWithWhopOrFallback(token, env) {
             const membershipPayload = await membershipResponse.json();
             const membership = membershipPayload?.data || membershipPayload;
 
-            const membershipCompanyId = membership?.company?.id;
-            if (membershipCompanyId && membershipCompanyId !== companyId) {
+            if (!isWhopResourceInScope(membership, env)) {
                 return {
                     active: false,
                     planName: "Free",
@@ -310,7 +362,11 @@ async function verifyWithWhopOrFallback(token, env) {
             const listPayload = await listResponse.json();
             const memberships = Array.isArray(listPayload?.data) ? listPayload.data : [];
 
-            if (memberships.length === 0) {
+            const scopedMemberships = memberships.filter((membership) =>
+                isWhopResourceInScope(membership, env)
+            );
+
+            if (scopedMemberships.length === 0) {
                 return {
                     active: false,
                     planName: "Free",
@@ -319,8 +375,8 @@ async function verifyWithWhopOrFallback(token, env) {
                 };
             }
 
-            const byUserMatch = memberships.find((membership) => membership?.user?.id === token);
-            return normalizeMembershipEntitlement(byUserMatch || memberships[0]);
+            const byUserMatch = scopedMemberships.find((membership) => membership?.user?.id === token);
+            return normalizeMembershipEntitlement(byUserMatch || scopedMemberships[0]);
         }
 
         return {
@@ -738,6 +794,11 @@ async function sendPostHogEvent(env, { clientId, eventName, params, extensionId 
         return { ok: true, skipped: true, reason: "posthog-not-configured" };
     }
 
+    const normalizedExtensionId = isValidChromeExtensionId(extensionId)
+        ? String(extensionId).trim().toLowerCase()
+        : "unknown";
+    const extensionVersion = sanitizeAnalyticsText(params?.extension_version, "unknown", 32);
+
     const response = await fetch(captureUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -746,9 +807,18 @@ async function sendPostHogEvent(env, { clientId, eventName, params, extensionId 
             distinct_id: clientId,
             event: eventName,
             properties: {
-                "$process_person_profile": false,
+                "$process_person_profile": true,
+                "$set": {
+                    latest_extension_version: extensionVersion
+                },
+                "$set_once": {
+                    analytics_source: "saturn_extension",
+                    extension_id: normalizedExtensionId,
+                    first_seen_extension_version: extensionVersion,
+                    profile_type: "pseudonymous_extension_install"
+                },
                 analytics_source: "saturn_extension",
-                extension_id: extensionId || "unknown",
+                extension_id: normalizedExtensionId,
                 ...params
             }
         })
@@ -1056,7 +1126,13 @@ function extractWebhookPaymentId(payload) {
     );
 }
 
-async function verifyWhopWebhookSignature(request, rawBody, secret) {
+function getWebhookToleranceSeconds(env) {
+    const configured = Number(env.WHOP_WEBHOOK_TOLERANCE_SECONDS || 300);
+    if (!Number.isFinite(configured) || configured < 30 || configured > 900) return 300;
+    return Math.floor(configured);
+}
+
+async function verifyWhopWebhookSignature(request, rawBody, secret, env = {}) {
     const secretBytes = parseWebhookSecret(secret);
     const key = await crypto.subtle.importKey(
         "raw",
@@ -1071,7 +1147,11 @@ async function verifyWhopWebhookSignature(request, rawBody, secret) {
     const webhookTimestamp = request.headers.get("webhook-timestamp");
     const webhookSignatureHeader = request.headers.get("webhook-signature");
 
-    if (webhookId && webhookTimestamp && webhookSignatureHeader) {
+    const timestampSeconds = Number(webhookTimestamp);
+    const timestampIsFresh = Number.isInteger(timestampSeconds) &&
+        Math.abs(unixNow() - timestampSeconds) <= getWebhookToleranceSeconds(env);
+
+    if (webhookId && timestampIsFresh && webhookSignatureHeader) {
         const signedContent = `${webhookId}.${webhookTimestamp}.${rawBody}`;
         const signatureBytes = await crypto.subtle.sign("HMAC", key, encoder.encode(signedContent));
         const expectedBase64 = bytesToBase64Url(new Uint8Array(signatureBytes))
@@ -1096,6 +1176,11 @@ async function verifyWhopWebhookSignature(request, rawBody, secret) {
         }
     }
 
+    // Legacy signatures have no timestamp and are replayable. They must be explicitly enabled.
+    if (String(env.WHOP_ALLOW_LEGACY_WEBHOOK_SIGNATURE || "").toLowerCase() !== "true") {
+        return false;
+    }
+
     // Legacy fallback
     const legacyHeader = request.headers.get("x-whop-signature") || request.headers.get("whop-signature");
     if (!legacyHeader) {
@@ -1112,6 +1197,18 @@ async function verifyWhopWebhookSignature(request, rawBody, secret) {
         .join("");
 
     return constantTimeEqual(hex, expectedHex);
+}
+
+async function kvHasProcessedWebhook(env, webhookId) {
+    if (!env.PREMIUM_STATUS || !webhookId) return false;
+    return Boolean(await env.PREMIUM_STATUS.get(`webhook:${webhookId}`));
+}
+
+async function kvMarkWebhookProcessed(env, webhookId) {
+    if (!env.PREMIUM_STATUS || !webhookId) return;
+    await env.PREMIUM_STATUS.put(`webhook:${webhookId}`, "1", {
+        expirationTtl: 60 * 60 * 24 * 7
+    });
 }
 
 // KV key format: "user:<userId>"
@@ -1165,9 +1262,7 @@ async function resolvePaymentToToken(env, paymentId) {
 
     const payload = await response.json();
     const payment = payload?.data || payload;
-    const companyId = String(env.WHOP_COMPANY_ID || "").trim();
-    const paymentCompanyId = payment?.company?.id || payment?.company_id;
-    if (companyId && paymentCompanyId && paymentCompanyId !== companyId) {
+    if (!isWhopResourceInScope(payment, env)) {
         return null;
     }
 
@@ -1493,6 +1588,11 @@ export default {
         }
 
         if (request.method === "POST" && url.pathname === "/whop/webhook") {
+        if (!env.WHOP_WEBHOOK_SECRET) {
+            console.log(JSON.stringify({ source: "whop-webhook", error: "missing-secret" }));
+            return json({ error: "Webhook verification is not configured" }, 503);
+        }
+
         // Read raw body text so we can verify the signature before parsing
         let rawBody;
         try {
@@ -1501,13 +1601,15 @@ export default {
             return json({ error: "Could not read body" }, 400);
         }
 
-        // Verify signature when a secret is configured
-        if (env.WHOP_WEBHOOK_SECRET) {
-            const valid = await verifyWhopWebhookSignature(request, rawBody, env.WHOP_WEBHOOK_SECRET);
-            if (!valid) {
-                console.log(JSON.stringify({ source: "whop-webhook", error: "invalid-signature" }));
-                return json({ error: "Invalid webhook signature" }, 401);
-            }
+        const valid = await verifyWhopWebhookSignature(
+            request,
+            rawBody,
+            env.WHOP_WEBHOOK_SECRET,
+            env
+        );
+        if (!valid) {
+            console.log(JSON.stringify({ source: "whop-webhook", error: "invalid-signature" }));
+            return json({ error: "Invalid webhook signature" }, 401);
         }
 
         let payload;
@@ -1520,6 +1622,22 @@ export default {
         const eventType = typeof payload?.type === "string" ? payload.type : null;
         const userId = extractWebhookUserId(payload);
         const paymentId = extractWebhookPaymentId(payload);
+        const recognizedEvent = WEBHOOK_ACTIVATE_EVENTS.has(eventType) || WEBHOOK_DEACTIVATE_EVENTS.has(eventType);
+
+        if (!recognizedEvent) {
+            return json({ ok: true, ignored: true, reason: "unsupported-event" });
+        }
+
+        const webhookResource = payload?.data || payload;
+        if (!isWhopResourceInScope(webhookResource, env)) {
+            console.log(JSON.stringify({ source: "whop-webhook", eventType, ignored: "out-of-scope" }));
+            return json({ ok: true, ignored: true, reason: "out-of-scope" });
+        }
+
+        const webhookId = String(request.headers.get("webhook-id") || "").trim();
+        if (await kvHasProcessedWebhook(env, webhookId)) {
+            return json({ ok: true, duplicate: true, eventType });
+        }
 
         if (userId && paymentId) {
             await kvSetPaymentToUser(env, paymentId, userId);
@@ -1544,15 +1662,16 @@ export default {
             }
         }
 
+        await kvMarkWebhookProcessed(env, webhookId);
+
         // Log only essential info to avoid exposing sensitive data
         console.log(JSON.stringify({
             source: "whop-webhook",
             eventType,
-            userId,
-            kvUpdated: userId !== null
+            kvUpdated: Boolean(userId)
         }));
 
-        return json({ ok: true, eventType, userId });
+        return json({ ok: true, eventType, updated: Boolean(userId) });
         }
 
         if (request.method === "POST" && url.pathname === "/whop/issue-token") {

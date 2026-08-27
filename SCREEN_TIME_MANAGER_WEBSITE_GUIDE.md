@@ -1,5 +1,7 @@
 # Screen Time Manager Website Guide
 
+> Current Saturn-branded website work should use `SATURN_BRAND_KIT.md` as the source of truth. This older light Screen Time Manager website guide is retained for legacy reference only.
+
 This guide defines how the Screen Time Manager marketing website should be designed, structured, and written.
 
 It should be used alongside `SCREEN_TIME_MANAGER_DESIGN_GUIDE.md`, which defines the overall product design system. This website guide applies that system specifically to the public-facing website.
