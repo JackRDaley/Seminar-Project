@@ -9,101 +9,105 @@
       content="Recent Saturn updates for focus presets, blocked-page tracking, analytics, and domain management."
     />
     <link rel="icon" href="/planets/saturn-app-icon-128.png" />
-    <link rel="stylesheet" href="/landing.css" />
+    <link rel="stylesheet" href="/editorial-pages.css" />
   </head>
-  <body>
+  <body class="editorial-page editorial-page--changelog">
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header">
-      <a class="brand" href="/" aria-label="Saturn home">
-        <img src="/planets/saturn-app-icon-128.png" alt="" />
-        <span>Saturn</span>
-      </a>
+      <a class="wordmark" href="/" aria-label="Saturn home">Saturn</a>
       <nav class="site-nav" aria-label="Main navigation">
+        <a href="/#product">Product</a>
         <a href="/#features">Features</a>
-        <a href="/privacy">Privacy</a>
-        <a href="/changelog">Changelog</a>
-        <a href="/feedback">Feedback</a>
+        <a href="/#journey">Journey</a>
+        <a href="/#faq">FAQ</a>
+        <a href="https://www.surveymonkey.com/r/QF2RJ58" target="_blank" rel="noreferrer">Feedback</a>
       </nav>
       <a
-        class="button button-primary header-cta"
+        class="store-button"
         href="https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo"
         target="_blank"
         rel="noreferrer"
       >
-        Add to Chrome
+        <span class="chrome-logo-image" aria-hidden="true"></span>
+        <span>Add to Chrome</span>
       </a>
     </header>
 
     <main id="main">
       <section class="page-hero">
-        <p class="eyebrow">Changelog</p>
-        <h1>Actively improving the focus experience.</h1>
-        <p>
-          Recent updates make Saturn easier to start, clearer to understand, and
-          more useful during repeat focus sessions.
-        </p>
+        <div class="page-hero__copy">
+          <span class="section-number">Changelog</span>
+          <span class="orange-rule" aria-hidden="true"></span>
+          <h1>Actively improving the focus experience.</h1>
+          <p>
+            Recent updates make Saturn easier to start, clearer to understand, and
+            more useful during repeat focus sessions.
+          </p>
+        </div>
       </section>
 
       <section class="page-content">
         <article>
+          <span class="entry-number">01</span>
           <h2>Adaptive popup dashboard refresh</h2>
-          <p>
-            Redesigned the extension popup with a sharper Saturn interface,
-            responsive Today summaries, clearer journey and profile stats, live
-            ranking actions, and more consistent typography across every tab.
-          </p>
+          <div class="entry-copy"><p>
+              Redesigned the extension popup with a sharper Saturn interface,
+              responsive Today summaries, clearer journey and profile stats, live
+              ranking actions, and more consistent typography across every tab.
+          </p></div>
         </article>
         <article>
+          <span class="entry-number">02</span>
           <h2>More precise analytics signals</h2>
-          <p>
-            Separated personal insight impressions from interactions and added
-            preset application tracking so product analytics better reflect what
-            users actually see and use.
-          </p>
+          <div class="entry-copy"><p>
+              Separated personal insight impressions from interactions and added
+              preset application tracking so product analytics better reflect what
+              users actually see and use.
+          </p></div>
         </article>
         <article>
+          <span class="entry-number">03</span>
           <h2>Quick-start presets</h2>
-          <p>
-            Added Study Mode, Deep Work Mode, and Sleep Mode so new users can
-            create useful limits without manually building every rule from
-            scratch.
-          </p>
+          <div class="entry-copy"><p>
+              Added Study Mode, Deep Work Mode, and Sleep Mode so new users can
+              create useful limits without manually building every rule from
+              scratch.
+          </p></div>
         </article>
         <article>
+          <span class="entry-number">04</span>
           <h2>Clearer blocked-page tracking</h2>
-          <p>
-            Added better tracking for blocked page views and blocked-page
-            actions so users can see when distracting sites are being reopened
-            out of habit.
-          </p>
+          <div class="entry-copy"><p>
+              Added better tracking for blocked page views and blocked-page
+              actions so users can see when distracting sites are being reopened
+              out of habit.
+          </p></div>
         </article>
         <article>
+          <span class="entry-number">05</span>
           <h2>Activity dashboard improvements</h2>
-          <p>
-            Refined dashboard stats around screen time, visits, blocked
-            attempts, and time saved so daily behavior is easier to scan.
-          </p>
+          <div class="entry-copy"><p>
+              Refined dashboard stats around screen time, visits, blocked
+              attempts, and time saved so daily behavior is easier to scan.
+          </p></div>
         </article>
         <article>
+          <span class="entry-number">06</span>
           <h2>Premium handoff improvements</h2>
-          <p>
-            Improved the checkout handoff flow so paid activation can return to
-            the correct extension install.
-          </p>
+          <div class="entry-copy"><p>
+              Improved the checkout handoff flow so paid activation can return to
+              the correct extension install.
+          </p></div>
         </article>
       </section>
     </main>
 
     <footer class="site-footer">
-      <div>
-        <a class="brand footer-brand" href="/">
-          <img src="/planets/saturn-app-icon-128.png" alt="" />
-          <span>Saturn</span>
-        </a>
+      <div class="site-footer__brand">
+        <a class="wordmark" href="/">Saturn</a>
         <p>
-          A simple Chrome extension for blocking distracting websites, setting
-          limits, and understanding your browsing habits.
+          For a calmer relationship with the web.
         </p>
       </div>
       <nav aria-label="Footer navigation">
@@ -111,15 +115,15 @@
           href="https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo"
           target="_blank"
           rel="noreferrer"
-          >Chrome Web Store</a
+        >Chrome Web Store</a
         >
+        <a href="https://www.producthunt.com/products/screen-time-manager" target="_blank" rel="noreferrer">Product Hunt</a>
         <a href="/privacy">Privacy</a>
-        <a href="/changelog">Changelog</a>
-        <a href="/feedback">Feedback</a>
+        <a href="/changelog" aria-current="page">Changelog</a>
+        <a href="https://www.surveymonkey.com/r/QF2RJ58" target="_blank" rel="noreferrer">Feedback</a>
       </nav>
     </footer>
 
     <script defer src="/_vercel/speed-insights/script.js"></script>
-    <script src="/landing.js"></script>
   </body>
 </html>

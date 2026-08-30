@@ -6,6 +6,16 @@
   "trailingSlash": false,
   "redirects": [
     {
+      "source": "/feedback",
+      "destination": "https://www.surveymonkey.com/r/QF2RJ58",
+      "permanent": false
+    },
+    {
+      "source": "/feedback.html",
+      "destination": "https://www.surveymonkey.com/r/QF2RJ58",
+      "permanent": false
+    },
+    {
       "source": "/(.*)",
       "has": [
         {

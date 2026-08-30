@@ -1,890 +1,200 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import posthog from "./posthog.js";
-
-const features = [
-  {
-    title: "Website blocking",
-    detail: "Block distracting sites before they pull you back in.",
-    icon: "pause",
-    tone: "orange"
-  },
-  {
-    title: "Daily limits",
-    detail: "Set time limits for specific domains so quick checks do not turn into long sessions.",
-    icon: "clock",
-    tone: "gold"
-  },
-  {
-    title: "Focus schedules",
-    detail: "Create time blocks where distracting websites stay unavailable.",
-    icon: "calendar",
-    tone: "cyan"
-  },
-  {
-    title: "Activity dashboard",
-    detail: "See blocked pages, repeat visits, and usage patterns in one simple view.",
-    icon: "spark",
-    tone: "orange"
-  },
-  {
-    title: "Adjustable friction",
-    detail: "Use gentle reminders, strict blocks, and focus rules that match real life.",
-    icon: "pointer",
-    tone: "gold"
-  },
-  {
-    title: "Privacy-conscious tracking",
-    detail: "Track only what is needed to provide blocking, limits, and basic usage stats.",
-    icon: "shield",
-    tone: "cyan"
-  }
-];
-
-const heroPoints = [
-  ["Add the sites", "YouTube, Reddit, social apps, news, or anything that breaks focus."],
-  ["Set your rules", "Use daily limits, schedules, or stricter focus blocks."],
-  ["Get a pause", "Turn an automatic tab check into a choice you can notice."]
-];
-
-const steps = [
-  ["01", "Add distracting websites", "Add YouTube, Reddit, TikTok, Instagram, X, games, news, or any domain that pulls you off task."],
-  ["02", "Choose your friction", "Use a daily limit, a focus schedule, or a stricter block when you need the extension to push back."],
-  ["03", "Notice the habit", "Blocked attempts become useful feedback instead of another lost session."]
-];
-
-const walkthroughs = [
-  {
-    title: "Map the loop",
-    detail: "Daily signals from your browsing behavior, grouped by repeat moments.",
-    tabIndex: 0
-  },
-  {
-    title: "Tune the pressure",
-    detail: "Set lighter pauses or firmer limits before the habit takes over.",
-    tabIndex: 1
-  },
-  {
-    title: "Protect focus windows",
-    detail: "Schedule deep-work blocks with focused site blocking.",
-    tabIndex: 2
-  },
-  {
-    title: "Review the pattern",
-    detail: "Profile-level context keeps progress, settings, and reclaimed time in perspective.",
-    tabIndex: 3
-  }
-];
-
-const faqs = [
-  ["Is Saturn free?", "The extension is free to install from the Chrome Web Store."],
-  ["Can I block specific websites?", "Yes. Add the domains that distract you, then choose limits, schedules, or stricter focus blocks for each one."],
-  ["Can I use schedules for school or work?", "Yes. Focus schedules are designed for recurring sessions like class, homework, deep work, or bedtime."],
-  ["Can I still change my rules later?", "Yes. You control the domains, schedules, limits, and friction level, so your setup can change with your routine."],
-  ["Does it track everything I do online?", "No. It is focused on domain-level activity, configured limits, blocked attempts, and usage stats needed for the product to work."],
-  ["Does this only work in Chrome?", "The extension is built for Chrome, alternative browser support is coming in the future."],
-];
-
-const credibilityItems = [
-  ["Built for real life", "Use softer reminders for ordinary browsing and stricter rules when you need a stronger boundary."],
-  ["Simple by default", "Start with one site. Add more rules only when you know they will help."],
-  ["Under your control", "The extension exists to support your attention, not to shame you for using the web."]
-];
-
-const testimonials = [
-  [
-    "Really like how it tracks how often you try to revisit blocked sites - that little number made me think twice before clicking reddit again. Simple and does the job without a bunch of extra fluff.",
-    "Aras Yaka — Product Hunt"
-  ],
-  [
-    "Finally tried this after seeing it on here and the attempt counter is honestly the standout feature for me, made me realize how reflexively I reopen Twitter. Blocking works fine but that little number staring back at you hits different.",
-    "Aleyna — Product Hunt"
-  ],
-  [
-    "Love that it tracks how often you try to revisit blocked sites instead of just silently blocking them. That little bit of friction makes the habit visible without feeling preachy.",
-    "Masal — Product Hunt"
-  ]
-];
 
 const storeUrl = "https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo";
 const feedbackUrl = "https://www.surveymonkey.com/r/QF2RJ58";
-const productHuntUrl = "https://www.producthunt.com/products/screen-time-manager?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-saturn-screen-time-manager";
-const productHuntBadgeUrl = "https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1168942&theme=light";
+const productHuntUrl = "https://www.producthunt.com/products/screen-time-manager";
 
-const internalLinks = {
-  privacy: "/privacy",
-  changelog: "/changelog",
-  feedback: "/feedback"
-};
-
-const trustItems = [
-  "No account required",
-  "No unnecessary tracking",
-  "No selling user data",
+const benefits = [
+  ["block", "Block", "pause"],
+  ["limit", "Limit", "clock"],
+  ["schedule", "Schedule", "calendar"],
+  ["review", "Review", "chart"],
 ];
 
-const linkMetadata = (url, fallback = {}) => {
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return {
-      destination: fallback.destination || parsed.hostname.replace(/^www\./, ""),
-      link_domain: parsed.hostname.replace(/^www\./, ""),
-      link_url: parsed.toString(),
-    };
-  } catch {
-    return {
-      destination: fallback.destination || "unknown",
-      link_domain: fallback.link_domain || "unknown",
-      link_url: url,
-    };
-  }
-};
+const featureDetails = [
+  ["Website blocking", "Block distracting sites before they pull you back in.", "pause"],
+  ["Daily limits", "Set time limits for specific domains so quick checks do not become long sessions.", "clock"],
+  ["Focus schedules", "Create recurring windows where distracting websites stay unavailable.", "calendar"],
+  ["Activity dashboard", "See blocked pages, repeat visits, and usage patterns in one clear view.", "chart"],
+  ["Adjustable friction", "Use gentle reminders or stricter rules depending on the moment.", "pause"],
+  ["Privacy-conscious tracking", "Track only what Saturn needs for blocking, limits, and useful activity summaries.", "chart"],
+];
 
-const trackOutboundClick = (eventName, url, properties) => {
-  posthog.capture(eventName, {
-    ...linkMetadata(url, properties),
-    ...properties,
-  });
-};
+const journeyStops = [
+  ["Earth", "12%"],
+  ["Moon", "29%"],
+  ["Mars", "45%"],
+  ["Jupiter", "62%"],
+  ["Saturn", "87%"],
+];
 
-const trackChromeWebStoreClick = (ctaLocation, sectionId = ctaLocation, sectionLabel = "Chrome Web Store CTA") => {
-  trackOutboundClick("chrome_web_store_clicked", storeUrl, {
-    action: "click",
-    cta_location: ctaLocation,
-    destination: "chrome_web_store",
-    link_text: "Add to Chrome",
-    section_id: sectionId,
-    section_label: sectionLabel,
-  });
-};
+const faqs = [
+  ["Is Saturn free?", "Saturn is free to install from the Chrome Web Store, and you do not need an account to get started."],
+  ["How do I get started?", "Add one distracting site, choose a daily limit, recurring schedule, or firmer focus block, then adjust or remove the rule whenever your routine changes."],
+  ["Can I block specific websites?", "Yes. Add the domains that distract you, then choose limits, schedules, or firmer focus blocks for each one."],
+  ["Does Saturn track everything I do online?", "No. Saturn focuses on domain-level activity, configured limits, blocked attempts, and the usage data needed for the product to work."],
+  ["Does Saturn work outside Chrome?", "Saturn is currently built for Google Chrome."],
+];
 
-const trackFeedbackClick = (ctaLocation) => {
-  trackOutboundClick("feedback_clicked", feedbackUrl, {
-    action: "click",
-    cta_location: ctaLocation,
-    destination: "feedback",
-    link_text: "Send feedback",
-    section_id: ctaLocation,
-    section_label: "Feedback",
-  });
-};
+const walkthroughCallouts = [
+  {
+    key: "summary",
+    number: "01",
+    side: "left",
+    title: "Your day, at a glance",
+    description: "See reclaimed time, pauses, and your riskiest hour in one place.",
+  },
+  {
+    key: "journey",
+    number: "02",
+    side: "right",
+    title: "Progress you can feel",
+    description: "Watch reclaimed time move your journey toward the next planet.",
+  },
+  {
+    key: "blocks",
+    number: "03",
+    side: "left",
+    title: "What’s protected now",
+    description: "See every active block and how much time remains.",
+  },
+  {
+    key: "habits",
+    number: "04",
+    side: "right",
+    title: "The habits underneath",
+    description: "Spot which sites consume the most time and attention.",
+  },
+  {
+    key: "risk",
+    number: "05",
+    side: "right",
+    title: "Your riskiest window",
+    description: "Find the hour distraction is strongest, then protect it.",
+  },
+];
 
-const trackProductHuntClick = () => {
-  trackOutboundClick("product_hunt_clicked", productHuntUrl, {
-    action: "click",
-    cta_location: "hero",
-    destination: "product_hunt",
-    link_text: "Product Hunt",
-    section_id: "hero",
-    section_label: "Hero",
-  });
-};
-
-function Icon({ name }) {
-  const common = {
-    width: "22",
-    height: "22",
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
-    "aria-hidden": "true"
-  };
-
-  if (name === "clock") {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
-      </svg>
-    );
-  }
-
-  if (name === "pause") {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M10 8v8M14 8v8" />
-      </svg>
-    );
-  }
-
-  if (name === "calendar") {
-    return (
-      <svg {...common}>
-        <path d="M7 3v3M17 3v3M4 8h16" />
-        <rect x="4" y="5" width="16" height="16" rx="3" />
-        <path d="M8 12h3M13 12h3M8 16h3" />
-      </svg>
-    );
-  }
-
-  if (name === "pointer") {
-    return (
-      <svg {...common}>
-        <path d="M5 3l14 7-6 2-2 6L5 3Z" />
-        <path d="m13 12 5 5" />
-      </svg>
-    );
-  }
-
-  if (name === "shield") {
-    return (
-      <svg {...common}>
-        <path d="M12 3 5 6v6c0 4.4 2.8 7.4 7 9 4.2-1.6 7-4.6 7-9V6l-7-3Z" />
-        <path d="m9 12 2 2 4-5" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg {...common}>
-      <path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" />
-      <path d="m18 15 .8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z" />
-    </svg>
-  );
+function trackStore(location) {
+  posthog.capture("chrome_web_store_clicked", { action: "click", cta_location: location, destination: "chrome_web_store", link_text: "Add to Chrome", section_id: location });
 }
 
-function GlowCard({ children, className = "" }) {
-  return <article className={`glow-card ${className}`}>{children}</article>;
+function trackFeedback(location) {
+  posthog.capture("feedback_clicked", { action: "click", cta_location: location, destination: "feedback", link_text: "Send feedback", section_id: location });
 }
 
-function DashboardPreview() {
-  return (
-    <div className="dashboard-preview" aria-label="Saturn dashboard preview">
-      <div className="preview-topline">
-        <div className="preview-brand">
-          <img src="/planets/saturn-app-icon-128.png" alt="" />
-          <div>
-            <strong>Saturn</strong>
-          </div>
-        </div>
-        <div className="preview-status">
-          <span className="status-burn">8</span>
-          <span className="status-active">2 active</span>
-        </div>
-      </div>
-      <div className="preview-tabs" aria-hidden="true">
-        <span className="is-active">Dashboard</span>
-        <span>Limits</span>
-        <span>Schedule</span>
-        <span>Settings</span>
-      </div>
-      <div className="preview-stat-grid">
-        <div>
-          <span>Screen time</span>
-          <strong>2h 18m</strong>
-          <em>-34m</em>
-        </div>
-        <div>
-          <span>Visits</span>
-          <strong>37</strong>
-          <em>-22%</em>
-        </div>
-        <div>
-          <span>Snoozes</span>
-          <strong>3</strong>
-          <em>Today</em>
-        </div>
-      </div>
-      <div className="preview-filter">Today</div>
-      <div className="preview-card active-blocks">
-        <span className="preview-label">Active blocks</span>
-        <div className="preview-row">
-          <div>
-            <strong>youtube.com</strong>
-            <span>Daily limit reached</span>
-          </div>
-          <em>0m left</em>
-        </div>
-        <div className="preview-row">
-          <div>
-            <strong>reddit.com</strong>
-            <span>Focus block active until 5:00 PM</span>
-          </div>
-          <em>42m</em>
-        </div>
-      </div>
-      <div className="preview-bottom-grid">
-        <div className="preview-card rank-card">
-          <span className="preview-label">Time spent</span>
-          <div className="rank-line"><strong>1</strong><span>youtube.com</span><em>1h 02m</em></div>
-          <div className="preview-meter"><span style={{ width: "86%" }} /></div>
-          <div className="rank-line"><strong>2</strong><span>reddit.com</span><em>34m</em></div>
-          <div className="preview-meter"><span style={{ width: "58%" }} /></div>
-        </div>
-        <div className="preview-card chart-card">
-          <span className="preview-label">Hourly usage</span>
-          <div className="preview-chart" aria-hidden="true">
-            {[18, 26, 12, 8, 24, 46, 58, 72, 49, 76, 61, 44, 32, 27, 20, 14].map((height, index) => (
-              <span key={index} style={{ height: `${height}%` }} />
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function BenefitIcon({ icon }) {
+  const common = { fill: "none", stroke: "currentColor", strokeWidth: "1.65", strokeLinecap: "round", strokeLinejoin: "round" };
+  if (icon === "pause") return <svg viewBox="0 0 28 28" {...common}><circle cx="14" cy="14" r="10" /><path d="M11.5 10v8M16.5 10v8" /></svg>;
+  if (icon === "clock") return <svg viewBox="0 0 28 28" {...common}><circle cx="14" cy="14" r="10" /><path d="M14 8v6l4 2" /></svg>;
+  if (icon === "calendar") return <svg viewBox="0 0 28 28" {...common}><rect x="5" y="6.5" width="18" height="16" /><path d="M5 11h18M9 4v5M19 4v5M9 15h2M14 15h2M19 15h.01M9 19h2M14 19h2" /></svg>;
+  return <svg viewBox="0 0 28 28" {...common}><path d="M5 22V15M11 22V10M17 22V5M23 22V13" /></svg>;
 }
 
-function ProductStage() {
-  return (
-    <div className="product-stage" aria-label="Saturn product preview">
-      <div className="device-frame">
-        <DashboardPreview />
-      </div>
-    </div>
-  );
+function StoreButton({ location }) {
+  return <a className="store-button" href={storeUrl} onClick={() => trackStore(location)} target="_blank" rel="noreferrer"><span className="chrome-logo-image" aria-hidden="true" /><span>Add to Chrome</span></a>;
 }
 
-function FrictionDemo() {
-  return (
-    <section className="friction-section">
-      <div className="friction-copy">
-        <span className="section-kicker">Why it works</span>
-        <h2>Saturn adds a pause between impulse and action</h2>
-        <p>
-          Most distractions are unconcious. Saturn adds a moment to notice the habit before it takes over.
-        </p>
-      </div>
-      <div className="friction-demo" aria-label="Friction flow example">
-        <div className="browser-bar">
-          <strong>youtube.com</strong>
-          <span />
-          <span />
-          <span />
-        </div>
-        <div className="intervention-card">
-          <Icon name="pause" />
-          <div>
-            <strong>Pause before continuing</strong>
-            <p>This site is blocked during your focus window.</p>
-          </div>
-        </div>
-        <div className="choice-row">
-          <span>Return to task</span>
-          <span>Close tab</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ProductMockup({ activeIndex, items, onTabChange, onUserInteract }) {
-  const frameRef = useRef(null);
-
-  const syncDemoTab = () => {
-    frameRef.current?.contentWindow?.postMessage(
-      { type: "saturn-demo-tab", tabIndex: items[activeIndex].tabIndex },
-      "*",
-    );
-  };
-
-  const resetAndSyncDemo = () => {
-    frameRef.current?.contentWindow?.postMessage({ type: "saturn-demo-reset" }, "*");
-    syncDemoTab();
-  };
-
-  useEffect(() => {
-    syncDemoTab();
-  }, [activeIndex]);
-
-  useEffect(() => {
-    const handleMessage = (event) => {
-      if (event.data?.type === "saturn-demo-ready") {
-        syncDemoTab();
-        return;
-      }
-      if (event.data?.type === "saturn-demo-interaction") {
-        onUserInteract();
-        return;
-      }
-      if (event.data?.type !== "saturn-demo-tab-selected") return;
-
-      const nextIndex = items.findIndex((item) => item.tabIndex === event.data.tabIndex);
-      if (nextIndex >= 0) onTabChange(nextIndex, { userInitiated: true });
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [activeIndex, items, onTabChange]);
-
-  return (
-    <div
-      className="walkthrough-preview"
-      aria-label={`${items[activeIndex].title} live product demo`}
-      onFocus={onUserInteract}
-      onPointerDown={onUserInteract}
-    >
-      <iframe
-        className="walkthrough-demo-frame"
-        onLoad={resetAndSyncDemo}
-        ref={frameRef}
-        src="/extension-demo/popup.html?v=exaggerated-stats-1"
-        title="Interactive Saturn extension demo"
-      />
-    </div>
-  );
+function SketchArrow({ direction }) {
+  const pointsRight = direction === "right";
+  return <svg className={`walkthrough-arrow walkthrough-arrow--${direction}`} viewBox="0 0 190 74" aria-hidden="true">
+    <path d={pointsRight ? "M5 20 C49 50 119 54 179 28" : "M185 18 C142 49 72 55 11 31"} />
+    <path className="walkthrough-arrow-echo" d={pointsRight ? "M7 23 C53 52 121 56 179 29" : "M183 21 C140 52 70 57 11 32"} />
+    <path d={pointsRight ? "M164 24 L179 28 L170 41" : "M27 25 L11 31 L21 43"} />
+  </svg>;
 }
 
 function ProductWalkthrough() {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const interactionPauseUntilRef = useRef(0);
-  const activeWalkthrough = walkthroughs[activeIndex];
+  return <section className="product-section product-walkthrough" id="product">
+    <header className="walkthrough-kicker"><span>01</span><span aria-hidden="true">/</span><span>Product walkthrough</span></header>
+    <div className="walkthrough-stage">
+      {walkthroughCallouts.map((callout) => <article className={`walkthrough-callout walkthrough-callout--${callout.side} walkthrough-callout--${callout.key}`} key={callout.key}>
+        {callout.side === "right" ? <SketchArrow direction="left" /> : null}
+        <div><h2>{callout.title}</h2><p>{callout.description}</p></div>
+        {callout.side === "left" ? <SketchArrow direction="right" /> : null}
+      </article>)}
 
-  const pauseAutoSwitching = () => {
-    interactionPauseUntilRef.current = Date.now() + 15000;
-  };
-
-  const selectWalkthrough = (index, options = {}) => {
-    if (options.userInitiated) {
-      pauseAutoSwitching();
-      posthog.capture("walkthrough_screen_selected", {
-        action: "select",
-        section_id: "walkthrough",
-        section_label: "Product walkthrough",
-        screen_name: walkthroughs[index].title,
-      });
-    }
-    setActiveIndex(index);
-  };
-
-  useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-    if (reducedMotion.matches) {
-      return undefined;
-    }
-
-    const timer = window.setInterval(() => {
-      if (Date.now() < interactionPauseUntilRef.current) return;
-      setActiveIndex((currentIndex) => (currentIndex + 1) % walkthroughs.length);
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
-  return (
-    <section className="walkthrough-section" id="walkthrough">
-      <div className="walkthrough-inner">
-        <div className="section-heading walkthrough-heading">
-          <span className="section-kicker">Product walkthrough</span>
-          <h2>See Saturn in action</h2>
-          <p>
-            See all of Saturn's features from the dashboard to creating an actual limit with our live demo.
-          </p>
+      <figure className="walkthrough-product">
+        <div className="walkthrough-dashboard-frame">
+          <img src="/saturn-dashboard-walkthrough.png" alt="Saturn dashboard showing the daily focus summary, space journey, active blocks, site rankings, and hourly usage" />
+          <svg className="walkthrough-mobile-map" viewBox="0 0 560 1147" aria-hidden="true">
+            <g><path d="M14 155 C70 170 112 193 166 224" /><path d="M151 210 L166 224 L147 228" /><circle cx="14" cy="155" r="12" /><text x="14" y="160">1</text></g>
+            <g><path d="M546 438 C505 447 472 466 430 492" /><path d="M446 475 L430 492 L452 493" /><circle cx="546" cy="438" r="12" /><text x="546" y="443">2</text></g>
+            <g><path d="M14 578 C67 588 103 600 145 625" /><path d="M129 609 L145 625 L124 627" /><circle cx="14" cy="578" r="12" /><text x="14" y="583">3</text></g>
+            <g><path d="M546 748 C500 757 468 777 427 806" /><path d="M444 787 L427 806 L451 804" /><circle cx="546" cy="748" r="12" /><text x="546" y="753">4</text></g>
+            <g><path d="M546 1067 C508 1053 477 1032 447 1007" /><path d="M468 1013 L447 1007 L454 1027" /><circle cx="546" cy="1067" r="12" /><text x="546" y="1072">5</text></g>
+          </svg>
         </div>
-        <div className="walkthrough-showcase">
-          <div className="walkthrough-demo-card" aria-label="Saturn product workflows">
-            <div className="walkthrough-preview-shell">
-              <ProductMockup
-                activeIndex={activeIndex}
-                items={walkthroughs}
-                onTabChange={selectWalkthrough}
-                onUserInteract={pauseAutoSwitching}
-              />
-              <div className="walkthrough-controls" aria-label="Choose product screen">
-                {walkthroughs.map((item, index) => (
-                  <button
-                    aria-label={`Show ${item.title}`}
-                    aria-pressed={activeIndex === index}
-                    className={`walkthrough-dot${activeIndex === index ? " is-active" : ""}`}
-                    key={item.title}
-                    onClick={() => selectWalkthrough(index, { userInitiated: true })}
-                    type="button"
-                  />
-                ))}
-              </div>
-            </div>
-            <div className="walkthrough-copy" aria-live="polite">
-              <h3>{activeWalkthrough.title}</h3>
-              <p>{activeWalkthrough.detail}</p>
-            </div>
-          </div>
-          <aside className="walkthrough-nudge" aria-label="Try the Saturn demo">
-            <div className="nudge-orbit" aria-hidden="true">
-              <span className="nudge-planet">
-                <img src="/planets/saturn-app-icon-128.png" alt="" />
-              </span>
-              <span className="nudge-cursor">
-                <Icon name="pointer" />
-              </span>
-            </div>
-            <span className="nudge-kicker">Live demo</span>
-            <h3>Click around. This is a live demo.</h3>
-            <a
-              className="button button-secondary"
-              href={storeUrl}
-              onClick={() => trackChromeWebStoreClick("walkthrough", "walkthrough", "Product walkthrough")}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Add Saturn to Chrome
-            </a>
-          </aside>
-        </div>
-      </div>
-    </section>
-  );
+      </figure>
+    </div>
+
+    <div className="walkthrough-mobile-notes">
+      {walkthroughCallouts.map((callout) => <article key={callout.key}><span>{callout.number}</span><div><h2>{callout.title}</h2><p>{callout.description}</p></div></article>)}
+    </div>
+  </section>;
 }
 
-function JourneySystem() {
-  return (
-    <GlowCard className="journey-card">
-      <div className="journey-header">
-        <span className="journey-kicker">Planet journey system</span>
-        <h2>
-          Your reclaimed time becomes a journey you can <span>see.</span>
-        </h2>
-        <p>Turn focus into progress. Every minute reclaimed moves you forward.</p>
-      </div>
-
-      <div className="journey-visual" aria-label="Journey progress from Earth toward the Moon">
-        <div className="journey-planet journey-planet-start">
-          <span className="journey-planet-icon">
-            <img src="/planets/earth.png" alt="" />
-          </span>
-          <strong>Earth</strong>
-        </div>
-        <div className="journey-path">
-          <img className="journey-path-image" src="/planets/mission-path.png" alt="" aria-hidden="true" />
-          <img className="journey-rocket" src="/planets/rocket-cutout.png" alt="" />
-        </div>
-        <div className="journey-planet journey-planet-next">
-          <span className="journey-planet-icon">
-            <img src="/planets/moon.png" alt="" />
-          </span>
-          <strong>Moon</strong>
-        </div>
-        <div className="journey-future-route" aria-label="Future journey destinations">
-          <span className="future-segment" aria-hidden="true"></span>
-          <span className="journey-future-stop">
-            <img src="/planets/mars.png" alt="Mars" />
-          </span>
-          <span className="future-segment" aria-hidden="true"></span>
-          <span className="journey-future-stop">
-            <img src="/planets/jupiter.png" alt="Jupiter" />
-          </span>
-          <span className="future-segment" aria-hidden="true"></span>
-          <span className="journey-future-stop journey-future-stop-saturn">
-            <img src="/planets/saturn-timeline.png" alt="Saturn" />
-          </span>
-        </div>
-      </div>
-
-      <div className="journey-explainer">
-        <div>
-          <span className="journey-info-icon" aria-hidden="true">
-            <img src="/planets/rocket-cutout.png" alt="" />
-          </span>
-          <strong>How you travel</strong>
-          <span>
-            Every blocked distraction and minute reclaimed pushes your rocket farther through the
-            solar system.
-          </span>
-        </div>
-        <div>
-          <span className="journey-info-icon" aria-hidden="true">
-            <img src="/planets/saturn-app-icon-128.png" alt="" />
-          </span>
-          <strong>Why it matters</strong>
-          <span>
-            Instead of watching a number increase, you will watch your focus carry you from planet
-            to planet.
-          </span>
-        </div>
-      </div>
-    </GlowCard>
-  );
+function JourneyRoute() {
+  return <figure className="journey-map" aria-label="Focus journey from Earth to Saturn">
+    <img src="/journey-engraved-v4.png" alt="" />
+    <figcaption>{journeyStops.map(([label, position], index) => <span className={index === 0 ? "is-current" : ""} style={{ "--stop": position }} key={label}>{label}</span>)}</figcaption>
+  </figure>;
 }
 
 export default function App() {
   useEffect(() => {
-    const thresholds = [25, 50, 75, 90];
     const seen = new Set();
-
-    const trackScrollDepth = () => {
-      const scrollable =
-        document.documentElement.scrollHeight - window.innerHeight;
-      if (scrollable <= 0) return;
-
-      const percentScrolled = Math.min(
-        100,
-        Math.round((window.scrollY / scrollable) * 100),
-      );
-
-      thresholds.forEach((threshold) => {
-        if (percentScrolled < threshold || seen.has(threshold)) return;
+    const recordDepth = () => {
+      const available = document.documentElement.scrollHeight - window.innerHeight;
+      if (available <= 0) return;
+      const depth = Math.round((window.scrollY / available) * 100);
+      [25, 50, 75, 90].forEach((threshold) => {
+        if (depth < threshold || seen.has(threshold)) return;
         seen.add(threshold);
-        posthog.capture("website_scroll_depth", {
-          action: "scroll",
-          percent_scrolled: threshold,
-          section_id: "page",
-          section_label: "Landing page",
-        });
+        posthog.capture("website_scroll_depth", { action: "scroll", percent_scrolled: threshold, section_id: "page" });
       });
     };
-
-    trackScrollDepth();
-    window.addEventListener("scroll", trackScrollDepth, { passive: true });
-    return () => window.removeEventListener("scroll", trackScrollDepth);
+    window.addEventListener("scroll", recordDepth, { passive: true });
+    return () => window.removeEventListener("scroll", recordDepth);
   }, []);
 
-  return (
-    <main className="prototype-shell">
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="Saturn home">
-          <img src="/planets/saturn-app-icon-128.png" alt="" />
-          <span>Saturn</span>
-        </a>
-        <nav aria-label="Prototype navigation">
-          <a href="#how-it-works">How it works</a>
-          <a href="#features">Features</a>
-          <a href="#walkthrough">Product</a>
-          <a href="#journey">Journey</a>
-          <a href="#faq">FAQ</a>
-        </nav>
-        <a
-          className="button button-primary"
-          href={storeUrl}
-          onClick={() => trackChromeWebStoreClick("header", "topbar", "Top navigation")}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Add to Chrome
-        </a>
-      </header>
+  return <main className="site-shell">
+    <header className="site-header">
+      <a className="wordmark" href="#top">Saturn</a>
+      <nav aria-label="Main navigation"><a href="#product">Product</a><a href="#features">Features</a><a href="#journey">Journey</a><a href="#faq">FAQ</a><a href={feedbackUrl} onClick={() => trackFeedback("header")} target="_blank" rel="noreferrer">Feedback</a></nav>
+      <StoreButton location="header" />
+    </header>
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <h1>Take back your <span>focus</span> with <span>Saturn</span></h1>
-          <p className="hero-lede">
-            Saturn helps you block distracting sites, set daily limits, and understand where your
-            time goes right from Chrome, with no account required.
-          </p>
-          <div className="hero-actions">
-            <a
-              className="button button-primary"
-              href={storeUrl}
-              onClick={() => trackChromeWebStoreClick("hero", "hero", "Hero")}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Add to Chrome
-            </a>
-            <a
-              className="product-hunt-badge"
-              href={productHuntUrl}
-              onClick={trackProductHuntClick}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <img
-                src={productHuntBadgeUrl}
-                alt="Saturn - Screen Time manager - Understand your browsing habits and stop digital distraction | Product Hunt"
-                width="250"
-                height="54"
-              />
-            </a>
-          </div>
-          <ul className="hero-points" aria-label="Quick setup">
-            {heroPoints.map(([title, detail]) => (
-              <li key={title}>
-                <strong>{title}</strong>
-                <span>{detail}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <ProductStage />
-      </section>
+    <section className="hero" id="top">
+      <div className="hero-reference-art" aria-hidden="true" />
+      <div className="hero-copy"><h1>Keep the<br />internet in<br />its place.</h1><span className="orange-rule" /><p>Saturn puts a pause between you and the tabs that steal your time.</p><StoreButton location="hero" /></div>
+    </section>
 
-      <section className="problem-section">
-        <div className="problem-copy">
-          <span className="section-kicker">The quick check is the trap</span>
-          <h2>Distraction starts before you notice it</h2>
-          <p>
-            You open YouTube for one video. You check Reddit for a minute. You glance at social
-            media between assignments. Saturn adds the friction you need before those
-            quick visits become a habit.
-          </p>
-        </div>
-      </section>
+    <section className="benefit-strip" aria-label="Saturn features">
+      {benefits.map(([key, label, icon]) => <article key={key}><BenefitIcon icon={icon} /><h2>{label}</h2><span className="orange-rule" /></article>)}
+    </section>
 
-      <section className="testimonial-strip" aria-label="User testimonials">
-        <div className="review-grid">
-          {testimonials.map(([quote, context]) => (
-            <GlowCard className="review-card" key={quote}>
-              <p>
-                <span className="quote-mark quote-mark-open" aria-hidden="true">{"\u201c"}</span>
-                {quote}
-                <span className="quote-mark quote-mark-close" aria-hidden="true">{"\u201d"}</span>
-              </p>
-              <span className="review-context">{context}</span>
-            </GlowCard>
-          ))}
-        </div>
-      </section>
+    <ProductWalkthrough />
 
-      <section className="reviews-section" aria-labelledby="reviews-title">
-        <div className="section-heading">
-          <span className="section-kicker">What users notice</span>
-          <h2 id="reviews-title">A small reminder can change everything</h2>
-          <p>You don't need another guilt trip. You need a moment where the automatic click becomes visible.</p>
-        </div>
-      </section>
+    <section className="quote-band"><div className="quote-planet"><img src="/saturn-concept-hero.png" alt="" /></div><blockquote><span>“</span><p>Really like how it tracks how often you try to revisit blocked sites - that little number made me think twice before clicking reddit again. Simple and does the job without a bunch of extra fluff.</p><footer>Aras Yaka <b>—</b> Product Hunt</footer></blockquote><StoreButton location="testimonial" /></section>
 
-      <FrictionDemo />
+    <section className="journey-section" id="journey">
+      <div className="editorial-heading"><span className="section-number">02</span><span className="orange-rule" /><h2>Put your reclaimed time into perspective.</h2><p>Every blocked distraction and minute reclaimed moves your journey farther through the solar system.</p></div>
+      <JourneyRoute />
+    </section>
 
-      <section className="flow-section" id="how-it-works">
-        <div className="section-heading">
-          <span className="section-kicker">How it works</span>
-          <h2>Set the rule once. Let Saturn do the rest</h2>
-        </div>
-        <div className="step-track">
-          {steps.map(([number, title, detail]) => (
-            <GlowCard className="step-card" key={number}>
-              <span className="step-number">{number}</span>
-              <h3>{title}</h3>
-              <p>{detail}</p>
-            </GlowCard>
-          ))}
-        </div>
-      </section>
+    <section className="features-section" id="features">
+      <header className="section-rail features-rail"><div><span className="section-number">03</span><span className="orange-rule" /></div><h2>Simple controls.<br />Useful signals.</h2><p>Everything you need to interrupt the habit, without turning your browser into a punishment system.</p></header>
+      <div className="feature-detail-list">{featureDetails.map(([title, detail, icon]) => <article key={title}><BenefitIcon icon={icon} /><div><h3>{title}</h3><p>{detail}</p></div></article>)}</div>
+    </section>
 
-      <section className="feature-section" id="features">
-        <div className="section-heading">
-          <span className="section-kicker">Features</span>
-          <h2>Simple to use, powerful to customize</h2>
-          <p>Clean controls, useful stats, and website limits that stay out of the way until you need them.</p>
-        </div>
-        <div className="feature-grid">
-          {features.map((feature) => (
-            <GlowCard className={`feature-card tone-${feature.tone}`} key={feature.title}>
-              <div className="icon-tile">
-                <Icon name={feature.icon} />
-              </div>
-              <h3>{feature.title}</h3>
-              <p>{feature.detail}</p>
-            </GlowCard>
-          ))}
-        </div>
-      </section>
+    <section className="faq-section" id="faq">
+      <div><span className="section-number">04</span><span className="orange-rule" /><h2>Questions<br />before you<br />install.</h2></div>
+      <div className="faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}<span aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</div>
+    </section>
 
-      <section className="journey-section" id="journey">
-        <JourneySystem />
-      </section>
+    <section className="closing-section"><div><span>Ready to focus?</span><h2>Start with one distracting site.</h2><p>Choose the site that pulls you off task most often and give your next focus session a stronger boundary.</p></div><StoreButton location="final_cta" /></section>
 
-      <ProductWalkthrough />
-
-      <section className="credibility-section" aria-labelledby="credibility-title">
-        <div className="section-heading">
-          <span className="section-kicker">Built for real life</span>
-          <h2 id="credibility-title-1">Strict when it matters, flexible when life changes</h2>
-          <p>Good focus tools should help without turning your browser into a punishment system.</p>
-        </div>
-        <div className="credibility-grid">
-          {credibilityItems.map(([title, detail]) => (
-            <GlowCard className="credibility-card" key={title}>
-              <h3>{title}</h3>
-              <p>{detail}</p>
-            </GlowCard>
-          ))}
-        </div>
-      </section>
-
-      <section className="final-cta">
-        <span className="section-kicker">Ready to focus?</span>
-        <h2>Start with one distracting site</h2>
-        <p>Add Saturn to Chrome, choose the site that pulls you off task most often, and give your next focus session a stronger boundary.</p>
-        <div className="cta-actions">
-          <a
-            className="button button-primary"
-            href={storeUrl}
-            onClick={() => trackChromeWebStoreClick("final_cta", "final_cta", "Final CTA")}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Add to Chrome
-          </a>
-          <a className="button button-secondary" href={internalLinks.privacy}>Read privacy policy</a>
-        </div>
-      </section>
-
-      <section className="faq-section" id="faq" aria-labelledby="faq-title">
-        <div className="section-heading">
-          <span className="section-kicker">FAQ</span>
-          <h2 id="faq-title">Questions before you install?</h2>
-        </div>
-        <div className="faq-list">
-          {faqs.map(([question, answer]) => (
-            <details key={question}>
-              <summary>{question}</summary>
-              <p>{answer}</p>
-            </details>
-          ))}
-        </div>
-      </section>
-
-      <section className="privacy-section">
-        <div>
-          <span className="section-kicker">Privacy and trust</span>
-          <h2>Built to be simple and privacy-conscious</h2>
-          <p>
-            Saturn only tracks the activity needed to provide website blocking,
-            limits, and usage stats. The product is built for personal focus, not surveillance.
-          </p>
-        </div>
-        <ul className="trust-list">
-          {trustItems.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="feedback-section">
-        <div>
-          <span className="section-kicker">Feedback</span>
-          <h2>Help shape Saturn</h2>
-          <p>Found a bug, want a feature, or have an idea for making the extension better?</p>
-        </div>
-        <a
-          className="button button-secondary"
-          href={feedbackUrl}
-          onClick={() => trackFeedbackClick("feedback_section")}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Send feedback
-        </a>
-      </section>
-
-      <footer className="site-footer">
-        <a className="brand" href="#top" aria-label="Saturn home">
-          <img src="/planets/saturn-app-icon-128.png" alt="" />
-          <span>Saturn</span>
-        </a>
-        <nav aria-label="Footer navigation">
-          <a
-            href={storeUrl}
-            onClick={() => trackChromeWebStoreClick("footer", "footer", "Footer")}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Chrome Web Store
-          </a>
-          <a href={internalLinks.privacy}>Privacy</a>
-          <a href={internalLinks.changelog}>Changelog</a>
-          <a
-            href={feedbackUrl}
-            onClick={() => trackFeedbackClick("footer")}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Feedback
-          </a>
-        </nav>
-      </footer>
-    </main>
-  );
+    <footer className="site-footer"><a className="wordmark" href="#top">Saturn</a><span>For a calmer relationship with the web.</span><nav aria-label="Footer navigation"><a href={storeUrl} onClick={() => trackStore("footer")} target="_blank" rel="noreferrer">Chrome Web Store</a><a href={productHuntUrl} target="_blank" rel="noreferrer">Product Hunt</a><a href="/privacy">Privacy</a><a href="/changelog">Changelog</a><a href={feedbackUrl} onClick={() => trackFeedback("footer")} target="_blank" rel="noreferrer">Feedback</a></nav></footer>
+  </main>;
 }
