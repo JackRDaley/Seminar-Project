@@ -6,10 +6,10 @@ const feedbackUrl = "https://www.surveymonkey.com/r/QF2RJ58";
 const productHuntUrl = "https://www.producthunt.com/products/screen-time-manager";
 
 const benefits = [
-  ["block", "Block", "pause"],
-  ["limit", "Limit", "clock"],
-  ["schedule", "Schedule", "calendar"],
-  ["review", "Review", "chart"],
+  ["block", "Block", "Pause distracting sites before a detour begins.", "pause"],
+  ["limit", "Limit", "Set a daily cap that protects time for what matters.", "clock"],
+  ["schedule", "Schedule", "Automate focus hours so distractions stay out of reach.", "calendar"],
+  ["review", "Review", "See the patterns in your habits and the time you reclaim.", "chart"],
 ];
 
 const featureDetails = [
@@ -171,7 +171,7 @@ export default function App() {
     </section>
 
     <section className="benefit-strip" aria-label="Saturn features">
-      {benefits.map(([key, label, icon]) => <article key={key}><BenefitIcon icon={icon} /><h2>{label}</h2><span className="orange-rule" /></article>)}
+      {benefits.map(([key, label, description, icon]) => <article key={key} tabIndex="0"><div className="benefit-summary"><BenefitIcon icon={icon} /><h2>{label}</h2><span className="orange-rule" /></div><p className="benefit-description">{description}</p></article>)}
     </section>
 
     <ProductWalkthrough />

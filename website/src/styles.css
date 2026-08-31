@@ -86,6 +86,12 @@
   .feature-detail-list article:nth-child(even){min-height:214px}
 }
 
+/* Reveal a little more context from the four controls in the header strip. */
+.benefit-strip article{position:relative;overflow:hidden;isolation:isolate}.benefit-summary{display:flex;flex-direction:column;align-items:center;gap:13px;transition:transform .32s cubic-bezier(.22,1,.36,1)}.benefit-description{display:none;max-width:238px;margin:0;text-align:center;color:rgba(11,11,11,.62);font-size:.78rem;line-height:1.45}
+@media(hover:hover) and (pointer:fine){.benefit-description{position:absolute;top:calc(50% + 30px);right:24px;left:24px;display:block;max-width:none;opacity:0;transform:translateY(12px);transition:opacity .22s ease,transform .32s cubic-bezier(.22,1,.36,1)}.benefit-strip article:is(:hover,:focus-visible) .benefit-summary{transform:translateY(-36px)}.benefit-strip article:is(:hover,:focus-visible) .benefit-description{opacity:1;transform:translateY(0)}.benefit-strip article:focus-visible{outline:2px solid var(--orange);outline-offset:-2px}}
+@media(hover:none),(pointer:coarse){.benefit-strip article{min-height:176px}.benefit-strip .benefit-description{display:block}.benefit-strip .benefit-summary{gap:9px}}
+@media(max-width:780px){.benefit-strip article{min-height:164px}.benefit-strip .benefit-description{max-width:145px;font-size:.68rem;line-height:1.38}}
+
 /* Section 01: annotated product walkthrough. */
 .product-section.product-walkthrough{
   --walkthrough-width:clamp(430px,38vw,500px);
