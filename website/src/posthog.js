@@ -3,20 +3,25 @@ import "posthog-js/dist/exception-autocapture";
 
 const token = import.meta.env.VITE_PUBLIC_POSTHOG_KEY;
 const apiHost = import.meta.env.VITE_PUBLIC_POSTHOG_HOST;
+const productionHosts = new Set(["saturnfocus.com", "www.saturnfocus.com"]);
+const hostname = globalThis.location?.hostname || "";
 const missingVariables = [
   !token && "VITE_PUBLIC_POSTHOG_KEY",
   !apiHost && "VITE_PUBLIC_POSTHOG_HOST",
 ].filter(Boolean);
+const isProductionHost = productionHosts.has(hostname);
+const enabled = isProductionHost && missingVariables.length === 0;
 
 export const analyticsStatus = {
   configured: missingVariables.length === 0,
+  enabled,
   initialized: false,
   missingVariables,
 };
 
 globalThis.__SATURN_ANALYTICS_STATUS__ = analyticsStatus;
 
-if (analyticsStatus.configured) {
+if (analyticsStatus.enabled) {
   posthog.init(token, {
     api_host: apiHost,
     defaults: "2026-05-30",
@@ -25,12 +30,8 @@ if (analyticsStatus.configured) {
     },
   });
   posthog.startExceptionAutocapture();
-} else {
-  const message = `Website analytics disabled: missing ${missingVariables.join(
-    " and ",
-  )}.`;
-  console.error(message);
-  if (import.meta.env.DEV) throw new Error(message);
 }
 
-export default posthog;
+export default analyticsStatus.enabled
+  ? posthog
+  : { capture: () => {} };
