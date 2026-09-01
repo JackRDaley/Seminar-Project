@@ -286,6 +286,18 @@ h1 {
   stroke-linejoin: round;
 }
 
+.site-favicon img {
+  width: 25px;
+  height: 25px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.site-favicon img[hidden],
+.site-favicon span[hidden] {
+  display: none;
+}
+
 .sequence-step.is-site .step-icon {
   border-color: rgba(255, 138, 97, 0.62);
   color: var(--coral);

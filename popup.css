@@ -2924,12 +2924,38 @@ img.planet-current {
 }
 
 .pattern-site-node {
+  position: relative;
   width: 62px;
   flex: 0 0 62px;
   display: grid;
   justify-items: center;
   gap: 3px;
   text-align: center;
+}
+
+.pattern-timeline.is-pro-preview .pattern-site-node.is-locked > * {
+  filter: blur(3.2px);
+  opacity: 0.38;
+  user-select: none;
+}
+
+.pattern-timeline.is-pro-preview .pattern-site-node.is-locked::after {
+  content: "PRO";
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 3;
+  padding: 3px 5px;
+  border: 1px solid rgba(143, 217, 227, 0.46);
+  border-radius: 999px;
+  color: #8fd9e3;
+  background: rgba(37, 30, 27, 0.94);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 10px;
+  transform: translateX(-50%);
 }
 
 .pattern-site-node-icon {
@@ -3130,7 +3156,8 @@ img.planet-current {
 
 .pattern-primary-btn:disabled,
 .pattern-secondary-btn:disabled,
-.pattern-link-btn:disabled {
+.pattern-link-btn:disabled,
+.pattern-icon-btn:disabled {
   cursor: default;
   opacity: 0.52;
   filter: saturate(0.45);
@@ -3148,6 +3175,43 @@ img.planet-current {
 
 .pattern-action-feedback.is-error {
   color: #ff8a61;
+}
+
+.pattern-review-actions {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.88fr);
+}
+
+.pattern-icon-btn {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  justify-self: end;
+  color: rgba(247, 231, 214, 0.62);
+  background: transparent;
+  cursor: pointer;
+  transition: color 150ms, background 150ms;
+}
+
+.pattern-icon-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.pattern-icon-btn:hover,
+.pattern-icon-btn:focus-visible {
+  color: #fff8ee;
+  background: transparent;
+  outline: none;
 }
 
 .pattern-review-title-row {
@@ -3350,15 +3414,6 @@ img.planet-current {
 .pattern-review-actions svg {
   width: 15px;
   height: 15px;
-}
-
-.pattern-turn-off {
-  color: #ff8a61;
-}
-
-.pattern-turn-off:hover,
-.pattern-turn-off:focus-visible {
-  color: #ffb18a;
 }
 
 .pattern-trigger-overlay {
@@ -10558,8 +10613,7 @@ body.pattern-pause-active .pattern-site-node-icon img {
   height: 28px;
   border-radius: 5px;
   object-fit: contain;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  opacity: 1;
 }
 
 body.pattern-pause-active .pattern-site-node-icon.has-favicon img {
@@ -10571,7 +10625,7 @@ body.pattern-pause-active .pattern-site-node-icon.has-favicon .pattern-favicon-f
 }
 
 body.pattern-pause-active .pattern-favicon-fallback {
-  transition: opacity 120ms ease;
+  transition: none;
 }
 
 body.pattern-pause-active .pattern-site-node.is-target .pattern-site-node-icon {
@@ -10785,6 +10839,11 @@ body.pattern-pause-active .pattern-link-btn {
   font-family: inherit;
   font-size: 11px;
   font-weight: 700;
+}
+
+body.pattern-pause-active .pattern-icon-btn {
+  color: #cfc2b8;
+  background: transparent;
 }
 
 body.pattern-pause-active .pattern-primary-btn {

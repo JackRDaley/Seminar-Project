@@ -73,6 +73,7 @@ const KEYS = Object.freeze({
   patternPauseHistory: "patternPauseHistory",
   patternPauseDismissals: "patternPauseDismissals",
   patternPauseBypasses: "patternPauseBypasses",
+  patternPauseFreeTrial: "patternPauseFreeTrial",
   statsHistory: "statsHistory",
   recentlyReset: "recentlyReset",
   activeSession: "activeSession",
@@ -1797,6 +1798,31 @@ function normalizedPatternPauseRules(rules = {}, now = Date.now()) {
   return normalized;
 }
 
+function normalizePatternPauseFreeTrial(raw = {}) {
+  const domain = normalizeDomain(raw?.domain);
+  return {
+    ruleId: String(raw?.ruleId || ""),
+    domain: isValidDomain(domain) ? domain : "",
+    activatedAt: Math.max(0, Number(raw?.activatedAt || 0)),
+    experiencedAt: Math.max(0, Number(raw?.experiencedAt || 0)),
+    expiresAt: Math.max(0, Number(raw?.expiresAt || 0)),
+  };
+}
+
+function patternPauseTrialHasBeenUsed(raw = {}) {
+  return normalizePatternPauseFreeTrial(raw).experiencedAt > 0;
+}
+
+function patternPauseRuleHasTrialAccess(rule = {}, rawTrial = {}, now = Date.now()) {
+  const trial = normalizePatternPauseFreeTrial(rawTrial);
+  return Boolean(
+    trial.ruleId &&
+      trial.ruleId === String(rule?.id || "") &&
+      trial.domain === normalizeDomain(rule?.domain) &&
+      trial.expiresAt > now,
+  );
+}
+
 function prunePatternPauseDismissals(dismissals = {}, now = Date.now()) {
   return Object.entries(dismissals || {}).reduce((result, [rawDomain, raw]) => {
     const domain = normalizeDomain(rawDomain);
@@ -1981,6 +2007,14 @@ async function enforcePatternPauseIfNeeded(tabId, tab, domain, data = {}) {
   );
   const rule = PatternPauseEngine.ruleForDomain?.(rules, domain, now);
   if (!rule) return false;
+  const hasAccess =
+    data[PREMIUM_KEY]?.active ||
+    patternPauseRuleHasTrialAccess(
+      rule,
+      data[KEYS.patternPauseFreeTrial] || {},
+      now,
+    );
+  if (!hasAccess) return false;
   if (
     patternPauseBypassIsActive(
       data[KEYS.patternPauseBypasses] || {},
@@ -2005,6 +2039,20 @@ async function enforcePatternPauseIfNeeded(tabId, tab, domain, data = {}) {
     .then(() => true)
     .catch(() => false);
   if (!redirected) return false;
+
+  if (!data[PREMIUM_KEY]?.active) {
+    const trial = normalizePatternPauseFreeTrial(
+      data[KEYS.patternPauseFreeTrial] || {},
+    );
+    if (!trial.experiencedAt) {
+      await set({
+        [KEYS.patternPauseFreeTrial]: {
+          ...trial,
+          experiencedAt: now,
+        },
+      });
+    }
+  }
 
   const updatedRule = await updatePatternPauseRule(domain, {
     lastTriggeredAt: now,
@@ -2142,7 +2190,9 @@ async function enforceIfNeeded(tabId = activeTabId) {
     KEYS.behaviorHistory,
     KEYS.patternPauseRules,
     KEYS.patternPauseBypasses,
+    KEYS.patternPauseFreeTrial,
     KEYS.uiSettings,
+    PREMIUM_KEY,
   ]);
 
   const scheduled = activeScheduledBlockFor(
@@ -2809,6 +2859,43 @@ async function scheduleBlockAlarms(block) {
   if (end) chrome.alarms.create(`endBlock_${block.id}`, { when: end });
 }
 
+function reconcileScheduledBlockChange(activeBlocks = [], nextBlock, now = Date.now()) {
+  const existing = activeBlocks.filter((item) => item.id === nextBlock.id);
+  const remaining = activeBlocks.filter((item) => item.id !== nextBlock.id);
+  const shouldBeActive = nextBlock.enabled && isScheduleActive(nextBlock, now);
+
+  if (!shouldBeActive) {
+    return { activeBlocks: remaining, endedBlocks: existing, activated: false };
+  }
+
+  const matchingDomain = existing.find(
+    (item) => normalizeDomain(item.domain) === nextBlock.domain,
+  );
+  if (matchingDomain) {
+    return {
+      activeBlocks: [
+        ...remaining,
+        {
+          ...matchingDomain,
+          ...nextBlock,
+          startedAt: Number(matchingDomain.startedAt) || now,
+        },
+      ],
+      endedBlocks: existing.filter((item) => item !== matchingDomain),
+      activated: false,
+    };
+  }
+
+  return {
+    activeBlocks: [
+      ...remaining,
+      { ...nextBlock, startedAt: now, breakMs: 0 },
+    ],
+    endedBlocks: existing,
+    activated: true,
+  };
+}
+
 async function activateScheduledBlock(id) {
   const data = await get([KEYS.scheduledBlocks, KEYS.activeBlocks]);
   const block = (data[KEYS.scheduledBlocks] || [])
@@ -3137,6 +3224,7 @@ async function initializeExtension(options = {}) {
     KEYS.patternPauseHistory,
     KEYS.patternPauseDismissals,
     KEYS.patternPauseBypasses,
+    KEYS.patternPauseFreeTrial,
   ]);
   await set({
     [KEYS.onboarding]: data[KEYS.onboarding] || {
@@ -3168,6 +3256,9 @@ async function initializeExtension(options = {}) {
     ),
     [KEYS.patternPauseBypasses]: prunePatternPauseBypasses(
       data[KEYS.patternPauseBypasses] || {},
+    ),
+    [KEYS.patternPauseFreeTrial]: normalizePatternPauseFreeTrial(
+      data[KEYS.patternPauseFreeTrial] || {},
     ),
   });
   await reconcileSchedules();
@@ -3292,7 +3383,20 @@ const handlers = {
       KEYS.patternPauseRules,
       KEYS.patternPauseDismissals,
       KEYS.uiSettings,
+      KEYS.patternPauseFreeTrial,
+      PREMIUM_KEY,
     ]);
+    const premiumActive = Boolean(data[PREMIUM_KEY]?.active);
+    const trial = normalizePatternPauseFreeTrial(
+      data[KEYS.patternPauseFreeTrial] || {},
+    );
+    if (!premiumActive && patternPauseTrialHasBeenUsed(trial)) {
+      return {
+        success: false,
+        code: "premium_required",
+        error: "You’ve used your free Pattern Pause. Unlock future check-ins with Saturn Pro.",
+      };
+    }
     if (data[KEYS.uiSettings]?.patternPausesEnabled === false) {
       return { success: false, error: "Pattern pauses are turned off in settings." };
     }
@@ -3325,7 +3429,8 @@ const handlers = {
       now,
     );
     const existing = existingRules[domain] || {};
-    const mode = request.mode === "ongoing" ? "ongoing" : "today";
+    const mode =
+      premiumActive && request.mode === "ongoing" ? "ongoing" : "today";
     const rule = await savePatternPauseRule({
       ...existing,
       id: existing.id || `pattern:${domain}`,
@@ -3344,6 +3449,17 @@ const handlers = {
       ),
       lastTriggeredAt: 0,
     });
+    if (!premiumActive) {
+      await set({
+        [KEYS.patternPauseFreeTrial]: {
+          ruleId: rule.id,
+          domain: rule.domain,
+          activatedAt: now,
+          experiencedAt: 0,
+          expiresAt: rule.expiresAt,
+        },
+      });
+    }
     const dismissals = prunePatternPauseDismissals(
       data[KEYS.patternPauseDismissals] || {},
       now,
@@ -3352,10 +3468,32 @@ const handlers = {
     await set({ [KEYS.patternPauseDismissals]: dismissals });
     await recordBehaviorEvent({ type: "pattern_pause_enabled", domain });
     await recordPatternPauseOutcome(rule, "enabled", { timestamp: now });
-    return { success: true, rule, evidence };
+    return { success: true, rule, evidence, freeTrial: !premiumActive };
   },
   updatePatternPauseRule: async (request) => {
     const domain = normalizeDomain(request.domain);
+    const access = await get([
+      PREMIUM_KEY,
+      KEYS.patternPauseRules,
+      KEYS.patternPauseFreeTrial,
+    ]);
+    if (!access[PREMIUM_KEY]?.active && request.enabled !== false) {
+      const rules = normalizedPatternPauseRules(
+        access[KEYS.patternPauseRules] || {},
+      );
+      const rule = rules[domain];
+      const trialAccess = patternPauseRuleHasTrialAccess(
+        rule,
+        access[KEYS.patternPauseFreeTrial] || {},
+      );
+      if (!trialAccess || request.mode === "ongoing") {
+        return {
+          success: false,
+          code: "premium_required",
+          error: "Unlock Saturn Pro to keep using Pattern Pause after your free preview.",
+        };
+      }
+    }
     const patch = {};
     if (typeof request.enabled === "boolean") patch.enabled = request.enabled;
     if (request.mode === "ongoing") patch.mode = "ongoing";
@@ -3548,12 +3686,27 @@ const handlers = {
       return { success: false, error: "Enter valid start and end times." };
     }
 
-    const data = await get([KEYS.scheduledBlocks]);
+    const data = await get([KEYS.scheduledBlocks, KEYS.activeBlocks]);
+    if ((data[KEYS.scheduledBlocks] || []).some((item) => item.id === block.id)) {
+      return { success: false, error: "A schedule with this ID already exists." };
+    }
     const scheduled = [...(data[KEYS.scheduledBlocks] || []), block];
-    await set({ [KEYS.scheduledBlocks]: scheduled });
+    const now = Date.now();
+    const reconciliation = reconcileScheduledBlockChange(
+      data[KEYS.activeBlocks] || [],
+      block,
+      now,
+    );
+    await set({
+      [KEYS.scheduledBlocks]: scheduled,
+      [KEYS.activeBlocks]: reconciliation.activeBlocks,
+    });
     await scheduleBlockAlarms(block);
     await queueDnrRulesSync();
     await scheduleActiveLimitWakeups(activeDomain);
+    if (reconciliation.activated) {
+      await redirectOpenTabsForDomain(block.domain, "scheduled", block.tier);
+    }
     return { success: true, block };
   },
   updateScheduledBlock: async (request) => {
@@ -3564,14 +3717,33 @@ const handlers = {
       return { success: false, error: "Enter valid start and end times." };
     }
 
-    const data = await get([KEYS.scheduledBlocks]);
+    const data = await get([KEYS.scheduledBlocks, KEYS.activeBlocks]);
+    const existing = (data[KEYS.scheduledBlocks] || []).find(
+      (item) => item.id === block.id,
+    );
+    if (!existing) return { success: false, error: "Schedule not found." };
     const scheduled = (data[KEYS.scheduledBlocks] || []).map((item) =>
       item.id === block.id ? block : item,
     );
-    await set({ [KEYS.scheduledBlocks]: scheduled });
+    const now = Date.now();
+    const reconciliation = reconcileScheduledBlockChange(
+      data[KEYS.activeBlocks] || [],
+      block,
+      now,
+    );
+    for (const endedBlock of reconciliation.endedBlocks) {
+      await addScheduledReclaimForBlock(endedBlock, now);
+    }
+    await set({
+      [KEYS.scheduledBlocks]: scheduled,
+      [KEYS.activeBlocks]: reconciliation.activeBlocks,
+    });
     await scheduleBlockAlarms(block);
     await queueDnrRulesSync();
     await scheduleActiveLimitWakeups(activeDomain);
+    if (reconciliation.activated) {
+      await redirectOpenTabsForDomain(block.domain, "scheduled", block.tier);
+    }
     return { success: true, block };
   },
   toggleScheduledBlockEnabled: async (request) => {

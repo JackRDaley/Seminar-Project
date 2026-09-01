@@ -168,6 +168,7 @@ async function installPopupChromeMock(page, overrides = {}, runtimeOptions = {})
             patternPauseRules: {},
             patternPauseHistory: { events: [], byRule: {} },
             patternPauseDismissals: {},
+            patternPauseFreeTrial: {},
             activeBlocks: [],
             scheduledBlocks: [],
             premiumState: { active: false, planName: 'Free' },
@@ -274,6 +275,7 @@ async function installPopupChromeMock(page, overrides = {}, runtimeOptions = {})
                     if (message?.action === 'enablePatternPause') {
                         const normalized = normalizeDomain(message.domain);
                         const now = Date.now();
+                        const freeTrial = data.premiumState?.active !== true;
                         const rule = {
                             id: `pattern:${normalized}`,
                             domain: normalized,
@@ -296,9 +298,18 @@ async function installPopupChromeMock(page, overrides = {}, runtimeOptions = {})
                             patternPauseDismissals: {
                                 ...(data.patternPauseDismissals || {}),
                                 [normalized]: undefined
-                            }
+                            },
+                            ...(freeTrial ? {
+                                patternPauseFreeTrial: {
+                                    ruleId: rule.id,
+                                    domain: rule.domain,
+                                    activatedAt: now,
+                                    experiencedAt: 0,
+                                    expiresAt: rule.expiresAt
+                                }
+                            } : {})
                         });
-                        return { success: true, rule };
+                        return { success: true, rule, freeTrial };
                     }
                     if (message?.action === 'updatePatternPauseRule') {
                         const normalized = normalizeDomain(message.domain);
@@ -560,6 +571,7 @@ test('pattern pause moves from evidence to trigger tuning and outcome review', a
         { type: 'navigation_visit', domain: 'instagram.com', timestamp: now }
     ];
     await installPopupChromeMock(page, {
+        premiumState: { active: true, planName: 'Pro' },
         behaviorHistory: {
             [dayKey(new Date(now))]: { count: events.length, events }
         }
@@ -693,6 +705,21 @@ test('pattern pause moves from evidence to trigger tuning and outcome review', a
     expect(integratedStyles.primaryHeight).toBe(30);
     expect(integratedStyles.primaryRadius).toBe('9px');
     expect(integratedStyles.secondaryWidth).toBe(98);
+    await expect(page.locator('#adjustPatternPauseBtn')).toHaveAttribute(
+        'aria-label',
+        'Adjust pattern trigger'
+    );
+    await expect(page.locator('#adjustPatternPauseBtn svg')).toHaveCount(1);
+    const adjustButtonStyle = await page.locator('#adjustPatternPauseBtn').evaluate((button) => ({
+        width: button.getBoundingClientRect().width,
+        height: button.getBoundingClientRect().height,
+        background: getComputedStyle(button).backgroundColor
+    }));
+    expect(adjustButtonStyle).toEqual({
+        width: 30,
+        height: 30,
+        background: 'rgba(0, 0, 0, 0)'
+    });
 
     await page.locator('#adjustPatternPauseBtn').click();
     await expect(page.locator('#patternTriggerOverlay')).toBeVisible();
@@ -700,9 +727,7 @@ test('pattern pause moves from evidence to trigger tuning and outcome review', a
         hasText: 'After 5 visits in 30 minutes'
     }).click();
     await page.locator('#savePatternTriggerBtn').click();
-    await expect(page.locator('#patternPauseFeedback')).toContainText(
-        '5 visits in 30 minutes'
-    );
+    await expect(page.locator('#patternPauseFeedback')).toBeEmpty();
 
     await page.locator('#enablePatternPauseBtn').click();
     await expect(page.locator('#patternPauseReviewView')).toBeVisible();
@@ -737,15 +762,142 @@ test('pattern pause moves from evidence to trigger tuning and outcome review', a
     await expect(page.locator('#patternContinuedCount')).toHaveText('2');
     await expect(page.locator('#patternClosedCount')).toHaveText('1');
     await expect(page.locator('#patternOutcomeRail')).toContainText('Closed tab');
+    await expect(page.locator('#turnOffPatternPauseBtn')).toHaveCount(0);
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-checked', 'true');
 
     await page.locator('#keepPatternPauseBtn').click();
     await expect(page.locator('#patternReviewStatus')).toContainText(
         'Continues until you turn it off'
     );
-    await page.locator('#turnOffPatternPauseBtn').click();
-    await expect(page.locator('#patternPauseExperience')).toBeHidden();
-    await expect(page.locator('#p1')).toHaveAttribute('data-summary-scenario', 'daily');
-    await expect(page.locator('#p1 .today-card')).toBeVisible();
+    await page.locator('#patternPauseToggle').click();
+    await expect(page.locator('#patternPauseReviewView')).toBeVisible();
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-checked', 'false');
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-label', 'Turn Pattern Pause on');
+    await expect(page.locator('#patternReviewStatus')).toContainText('Off');
+    await expect(page.locator('#patternPauseFeedback')).toBeEmpty();
+
+    await page.locator('#patternPauseToggle').click();
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-label', 'Turn Pattern Pause off');
+    await expect(page.locator('#patternReviewStatus')).toContainText('Continues until you turn it off');
+});
+
+test('free users can activate one full Pattern Pause preview', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 10 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 10 * minute + 300 },
+        { type: 'navigation_visit', domain: 'docs.google.com', timestamp: now - 6 * minute },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 4 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 4 * minute + 300 },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now }
+    ];
+    await installPopupChromeMock(page, {
+        premiumState: { active: false, planName: 'Free' },
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+
+    await expect(page.locator('#patternPauseExperience')).toBeVisible();
+    await expect(page.locator('#patternTimelineTrack')).toBeVisible();
+    await expect(page.locator('#patternSuggestionCopy')).toContainText(
+        'automatic habit check-in free'
+    );
+    await expect(page.locator('#enablePatternPauseBtn')).toHaveText('Try Pattern Pause free');
+    await expect(page.locator('#patternTimelineTrack .is-locked')).toHaveCount(0);
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-icon.has-favicon')).toHaveCount(4);
+    await expect.poll(() => page.evaluate(() => (
+        window.__popupData.uiSettings.insightNotificationsEnabled
+    ))).toBe(true);
+
+    await page.locator('#enablePatternPauseBtn').click();
+
+    await expect(page.locator('#patternPauseReviewView')).toBeVisible();
+    await expect(page.locator('#patternReviewStatus')).toContainText('Free preview');
+    await expect(page.locator('#keepPatternPauseBtn')).toContainText('Unlock future pattern pauses');
+    await expect(page.locator('#turnOffPatternPauseBtn')).toHaveCount(0);
+    await expect(page.locator('#patternPauseToggle')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#patternPauseFeedback')).toBeEmpty();
+    await expect.poll(() => page.evaluate(() => window.__popupOpenedTabs)).toEqual([]);
+    await expect.poll(() => page.evaluate(() => (
+        window.__popupMessages.some((message) => message.action === 'enablePatternPause')
+    ))).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__popupData.patternPauseFreeTrial)).toEqual(
+        expect.objectContaining({
+            ruleId: 'pattern:instagram.com',
+            domain: 'instagram.com',
+            experiencedAt: 0
+        })
+    );
+});
+
+test('used Pattern Pause trial keeps evidence visible but locks detail and future activation', async ({ page }) => {
+    const now = Date.now();
+    const minute = 60 * 1000;
+    const events = [
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 10 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 10 * minute + 300 },
+        { type: 'navigation_visit', domain: 'docs.google.com', timestamp: now - 6 * minute },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now - 4 * minute },
+        { type: 'new_tab_quick_nav', domain: 'instagram.com', timestamp: now - 4 * minute + 300 },
+        { type: 'navigation_visit', domain: 'instagram.com', timestamp: now }
+    ];
+    await installPopupChromeMock(page, {
+        premiumState: { active: false, planName: 'Free' },
+        patternPauseFreeTrial: {
+            ruleId: 'pattern:reddit.com',
+            domain: 'reddit.com',
+            activatedAt: now - 24 * 60 * minute,
+            experiencedAt: now - 23 * 60 * minute,
+            expiresAt: now - 12 * 60 * minute
+        },
+        behaviorHistory: {
+            [dayKey(new Date(now))]: { count: events.length, events }
+        }
+    });
+
+    await page.goto(popupUrl());
+
+    await expect(page.locator('#patternVisitCount')).not.toHaveText('0 times');
+    await expect(page.locator('#patternSuggestionCopy')).toContainText('used your free Pattern Pause');
+    await expect(page.locator('#patternSuggestionCopy')).toContainText('$10 one-time');
+    await expect(page.locator('#patternTimelineAccessLabel')).toContainText('Pro preview');
+    await expect(page.locator('#patternTimelineTrack .pattern-site-node-icon.has-favicon')).toHaveCount(4);
+    const firstIcon = page.locator('#patternTimelineTrack .pattern-site-node-icon').first();
+    await expect.poll(() => firstIcon.evaluate((icon) => {
+        const image = icon.querySelector('img');
+        const fallback = icon.querySelector('.pattern-favicon-fallback');
+        return {
+            source: image?.getAttribute('src') || '',
+            naturalWidth: image?.naturalWidth || 0,
+            imageOpacity: image ? getComputedStyle(image).opacity : '',
+            imageTransitionDuration: image ? getComputedStyle(image).transitionDuration : '',
+            fallbackOpacity: fallback ? getComputedStyle(fallback).opacity : ''
+        };
+    })).toEqual({
+        source: expect.stringMatching(/assets\/site-icons\/instagram\.svg$/),
+        naturalWidth: expect.any(Number),
+        imageOpacity: '1',
+        imageTransitionDuration: '0s',
+        fallbackOpacity: '0'
+    });
+    await expect(page.locator('#patternTimelineTrack .is-locked')).toHaveCount(2);
+    await expect(page.locator('#adjustPatternPauseBtn')).toHaveAttribute('class', 'pattern-icon-btn');
+    await expect(page.locator('#enablePatternPauseBtn')).toHaveText('Unlock with Pro');
+
+    await page.locator('#enablePatternPauseBtn').click();
+
+    const expectedCheckoutUrl = `${WHOP_CHECKOUT_START_URL}?ext=mock-extension-id`;
+    await expect.poll(() => page.evaluate(() => window.__popupOpenedTabs.map((tab) => tab.url))).toEqual([
+        expectedCheckoutUrl
+    ]);
+    await expect.poll(() => page.evaluate(() => (
+        window.__popupMessages.some((message) => message.action === 'enablePatternPause')
+    ))).toBe(false);
 });
 
 test('pattern summary compresses a homogeneous new-tab loop', async ({ page }) => {
@@ -1385,6 +1537,31 @@ test('active scheduled sessions become cancellable after pausing', async ({ page
 
     await scheduleRow.locator('[data-action="remove-schedule"]').click();
     await expect.poll(() => page.evaluate(() => window.__popupData.scheduledBlocks.length)).toBe(0);
+});
+
+test('editing a paused schedule keeps it paused', async ({ page }) => {
+    const schedule = {
+        id: 'paused-schedule',
+        domain: 'focus.com',
+        startTime: '09:00',
+        endTime: '17:00',
+        days: [1, 2, 3, 4, 5],
+        enabled: false,
+        tier: 'standard'
+    };
+    await installPopupChromeMock(page, { scheduledBlocks: [schedule] });
+
+    await page.goto(popupUrl());
+    await page.locator('label[for="tab3"]').click();
+    const scheduleRow = page.locator('#scheduledList .row').filter({ hasText: 'focus.com' });
+    await scheduleRow.locator('[data-action="edit-schedule"]').click();
+    await page.locator('#scheduledSubmitBtn').click();
+
+    await expect.poll(() => page.evaluate(() => (
+        window.__popupMessages.findLast((message) => message.action === 'updateScheduledBlock')
+    ))).toEqual(expect.objectContaining({
+        block: expect.objectContaining({ id: 'paused-schedule', enabled: false })
+    }));
 });
 
 test('schedule form starts with no days selected', async ({ page }) => {

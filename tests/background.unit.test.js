@@ -3002,6 +3002,61 @@ describe("Background helper functions (unit)", () => {
     global.chrome.storage.local = originalStorage;
   });
 
+  test("adding a schedule during its current window activates and redirects immediately", async () => {
+    const now = new Date();
+    const end = new Date(now.getTime() + 5 * 60 * 1000);
+    const time = (date) =>
+      `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const storage = {
+      data: { scheduledBlocks: [], activeBlocks: [] },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const originalQuery = global.chrome.tabs.query;
+    const originalUpdate = global.chrome.tabs.update;
+    global.chrome.storage.local = storage;
+    global.chrome.tabs.query = jest.fn(async () => [
+      { id: 41, url: "https://focus.com/articles" },
+    ]);
+    global.chrome.tabs.update = jest.fn(async () => ({}));
+
+    const response = await sendBackgroundMessage({
+      action: "addScheduledBlock",
+      block: {
+        id: "current-focus-session",
+        domain: "focus.com",
+        startTime: time(now),
+        endTime: time(end),
+        days: [now.getDay()],
+        tier: "standard",
+      },
+    });
+
+    expect(response).toEqual(expect.objectContaining({ success: true }));
+    expect(storage.data.activeBlocks).toEqual([
+      expect.objectContaining({
+        id: "current-focus-session",
+        domain: "focus.com",
+        tier: "standard",
+      }),
+    ]);
+    expect(global.chrome.tabs.update).toHaveBeenCalledWith(
+      41,
+      expect.objectContaining({
+        url: expect.stringContaining("blocked.html?d=focus.com&source=scheduled"),
+      }),
+    );
+
+    global.chrome.storage.local = originalStorage;
+    global.chrome.tabs.query = originalQuery;
+    global.chrome.tabs.update = originalUpdate;
+  });
+
   test("premium verification errors retain the last known state and pending token", async () => {
     const storage = {
       data: {
@@ -3155,6 +3210,7 @@ describe("Background helper functions (unit)", () => {
         patternPauseHistory: { events: [], byRule: {} },
         patternPauseBypasses: {},
         uiSettings: { patternPausesEnabled: true, personalInsightsEnabled: false },
+        premiumState: { active: true, planName: "Pro" },
       },
       async get(keys) {
         return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
@@ -3204,6 +3260,136 @@ describe("Background helper functions (unit)", () => {
     global.chrome.tabs.update = originalUpdate;
   });
 
+  test("free users get one experienced Pattern Pause before future activations lock", async () => {
+    const now = Date.now();
+    const today = localDayKey(new Date(now));
+    const rule = {
+      id: "pattern:instagram.com",
+      domain: "instagram.com",
+      enabled: true,
+      mode: "ongoing",
+      createdAt: now - 60000,
+      updatedAt: now - 60000,
+      thresholdVisits: 3,
+      windowMinutes: 30,
+      minSignals: 1,
+      cooldownMinutes: 5,
+      bypassMinutes: 10,
+      lastTriggeredAt: 0,
+    };
+    const events = [
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 900000 },
+      { type: "new_tab_quick_nav", domain: "instagram.com", timestamp: now - 899500 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 480000 },
+      { type: "navigation_visit", domain: "instagram.com", timestamp: now - 60000 },
+    ];
+    const storage = {
+      data: {
+        activeBlocks: [],
+        blockedDomains: {},
+        statsToday: {},
+        snoozedDomains: {},
+        recentlyReset: {},
+        behaviorHistory: { [today]: { count: events.length, events } },
+        patternPauseRules: {},
+        patternPauseHistory: { events: [], byRule: {} },
+        patternPauseDismissals: {},
+        patternPauseBypasses: {},
+        patternPauseFreeTrial: {},
+        uiSettings: { patternPausesEnabled: true, personalInsightsEnabled: true },
+        premiumState: { active: false, planName: "Free" },
+      },
+      async get(keys) {
+        return Object.fromEntries(keys.map((key) => [key, this.data[key]]));
+      },
+      async set(items) {
+        Object.assign(this.data, items);
+      },
+    };
+    const originalStorage = global.chrome.storage.local;
+    const originalGet = global.chrome.tabs.get;
+    const originalUpdate = global.chrome.tabs.update;
+    global.chrome.storage.local = storage;
+    global.chrome.tabs.get = jest.fn(async () => ({
+      id: 43,
+      url: "https://instagram.com/reels/abc",
+    }));
+    global.chrome.tabs.update = jest.fn(async () => ({}));
+
+    const response = await sendBackgroundMessage({
+      action: "enablePatternPause",
+      domain: "instagram.com",
+      mode: "today",
+      thresholdVisits: 3,
+      windowMinutes: 30,
+    });
+
+    expect(response).toEqual(
+      expect.objectContaining({ success: true, freeTrial: true }),
+    );
+    expect(storage.data.patternPauseRules["instagram.com"]).toEqual(
+      expect.objectContaining({ domain: "instagram.com", mode: "today" }),
+    );
+    expect(storage.data.patternPauseFreeTrial).toEqual(
+      expect.objectContaining({
+        ruleId: "pattern:instagram.com",
+        domain: "instagram.com",
+        experiencedAt: 0,
+      }),
+    );
+
+    const tunedResponse = await sendBackgroundMessage({
+      action: "updatePatternPauseRule",
+      domain: "instagram.com",
+      thresholdVisits: 3,
+      windowMinutes: 45,
+    });
+    expect(tunedResponse).toEqual(expect.objectContaining({ success: true }));
+    const keepResponse = await sendBackgroundMessage({
+      action: "updatePatternPauseRule",
+      domain: "instagram.com",
+      mode: "ongoing",
+    });
+    expect(keepResponse).toEqual(
+      expect.objectContaining({ success: false, code: "premium_required" }),
+    );
+
+    expect(await enforceIfNeeded(43)).toBe(true);
+    expect(global.chrome.tabs.update).toHaveBeenCalledWith(
+      43,
+      expect.objectContaining({ url: expect.stringContaining("pattern-pause.html?") }),
+    );
+    expect(storage.data.patternPauseFreeTrial.experiencedAt).toBeGreaterThan(0);
+
+    storage.data.patternPauseRules = {};
+    const lockedResponse = await sendBackgroundMessage({
+      action: "enablePatternPause",
+      domain: "instagram.com",
+      mode: "today",
+      thresholdVisits: 3,
+      windowMinutes: 30,
+    });
+    expect(lockedResponse).toEqual(
+      expect.objectContaining({ success: false, code: "premium_required" }),
+    );
+
+    storage.data.patternPauseRules = { "instagram.com": rule };
+    storage.data.patternPauseFreeTrial = {
+      ruleId: "pattern:reddit.com",
+      domain: "reddit.com",
+      activatedAt: now - 60000,
+      experiencedAt: now - 30000,
+      expiresAt: now + 60000,
+    };
+    global.chrome.tabs.update.mockClear();
+    expect(await enforceIfNeeded(43)).toBe(false);
+    expect(global.chrome.tabs.update).not.toHaveBeenCalled();
+
+    global.chrome.storage.local = originalStorage;
+    global.chrome.tabs.get = originalGet;
+    global.chrome.tabs.update = originalUpdate;
+  });
+
   test("continuing grants a same-tab bypass without changing the rule", async () => {
     const now = Date.now();
     const today = localDayKey(new Date(now));
@@ -3239,6 +3425,7 @@ describe("Background helper functions (unit)", () => {
         patternPauseHistory: { events: [], byRule: {} },
         patternPauseBypasses: {},
         uiSettings: { patternPausesEnabled: true, personalInsightsEnabled: false },
+        premiumState: { active: true, planName: "Pro" },
       },
       async get(keys) {
         return Object.fromEntries(keys.map((key) => [key, this.data[key]]));

@@ -19,6 +19,7 @@ const BEHAVIOR_HISTORY_KEY = "behaviorHistory";
 const PATTERN_PAUSE_RULES_KEY = "patternPauseRules";
 const PATTERN_PAUSE_HISTORY_KEY = "patternPauseHistory";
 const PATTERN_PAUSE_DISMISSALS_KEY = "patternPauseDismissals";
+const PATTERN_PAUSE_FREE_TRIAL_KEY = "patternPauseFreeTrial";
 const PATTERN_PREVIEW_SCENARIOS = Object.freeze([
   "new-tab",
   "existing-tab",
@@ -273,6 +274,7 @@ let liveRefreshPromise = null;
 let rankingMotionRestoreTimer = null;
 let settingsOverlayCloseTimer = null;
 let journeyAnimationCleanupTimer = null;
+let dashboardLeadResizeObserver = null;
 const viewedInsightsThisSession = new Set();
 
 function normalizeDomain(input) {
@@ -1243,6 +1245,32 @@ function premiumIsActive() {
   return Boolean(state.premium?.active);
 }
 
+function patternPauseFreeTrial() {
+  const raw = state.data[PATTERN_PAUSE_FREE_TRIAL_KEY] || {};
+  return {
+    ruleId: String(raw.ruleId || ""),
+    domain: normalizeDomain(raw.domain),
+    activatedAt: Math.max(0, Number(raw.activatedAt || 0)),
+    experiencedAt: Math.max(0, Number(raw.experiencedAt || 0)),
+    expiresAt: Math.max(0, Number(raw.expiresAt || 0)),
+  };
+}
+
+function patternPauseTrialHasBeenUsed() {
+  return patternPauseFreeTrial().experiencedAt > 0;
+}
+
+function activeRuleUsesPatternPauseTrial(rule, now = Date.now()) {
+  const trial = patternPauseFreeTrial();
+  return Boolean(
+    !premiumIsActive() &&
+      trial.ruleId &&
+      trial.ruleId === String(rule?.id || "") &&
+      trial.domain === normalizeDomain(rule?.domain) &&
+      trial.expiresAt > now,
+  );
+}
+
 function countBlockedDomains(blockedDomains = {}) {
   return Object.keys(blockedDomains || {}).filter((domain) =>
     isValidDomain(domain),
@@ -1673,7 +1701,12 @@ function updateDashboardStack() {
     patternPause.style.height = "auto";
     leadCardHeight = Math.max(
       baseTodayHeight,
-      Math.ceil(patternPause.scrollHeight),
+      Math.ceil(
+        Math.max(
+          patternPause.scrollHeight,
+          patternPause.getBoundingClientRect().height,
+        ),
+      ),
     );
   } else {
     today.style.height = "auto";
@@ -1712,6 +1745,22 @@ function updateDashboardStack() {
   });
 }
 
+function observeDashboardLeadSize() {
+  if (typeof ResizeObserver !== "function") return;
+  const today = document.querySelector("#p1 .today-card");
+  const patternPause = $("patternPauseExperience");
+  if (!today || !patternPause) return;
+
+  if (!dashboardLeadResizeObserver) {
+    dashboardLeadResizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(updateDashboardStack);
+    });
+  }
+  dashboardLeadResizeObserver.disconnect();
+  dashboardLeadResizeObserver.observe(today);
+  dashboardLeadResizeObserver.observe(patternPause);
+}
+
 function patternPauseDomainLabel(domain) {
   return PatternPauseEngine.domainLabel?.(domain) || domain || "This site";
 }
@@ -1740,6 +1789,9 @@ function patternPauseFallbackFaviconUrl(domain) {
 function patternPauseFaviconUrl(domain, size = 32) {
   const normalized = normalizeDomain(domain);
   if (!normalized) return "";
+
+  const bundledIcon = patternPauseFallbackFaviconUrl(normalized);
+  if (bundledIcon) return bundledIcon;
 
   try {
     const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
@@ -1781,7 +1833,7 @@ function patternPauseStepMeta(item = {}) {
   return { key: "existing-tab", label: "existing tab" };
 }
 
-function patternPauseTimelineHtml(candidate) {
+function patternPauseTimelineHtml(candidate, options = {}) {
   const domain = candidate?.domain || "";
   const evidence = candidate?.evidence || {};
   const items = (Array.isArray(evidence.timeline) ? evidence.timeline : [])
@@ -1800,6 +1852,7 @@ function patternPauseTimelineHtml(candidate) {
 
   return items
     .map((item, index) => {
+      const locked = options.locked === true && index >= 2;
       const itemDomain = normalizeDomain(item.domain) || domain;
       const label = patternPauseDomainLabel(itemDomain);
       const initial = label.charAt(0).toUpperCase() || "S";
@@ -1818,7 +1871,7 @@ function patternPauseTimelineHtml(candidate) {
         : "";
       const step = patternPauseStepMeta(item);
       const displayDomain = itemDomain === "mail.google.com" ? "gmail.com" : itemDomain;
-      return `${line}<div class="pattern-site-node${item.isTarget ? " is-target" : ""} is-${step.key}" title="${escapeHtml(`${itemDomain} · ${step.label}`)}">
+      return `${line}<div class="pattern-site-node${item.isTarget ? " is-target" : ""} is-${step.key}${locked ? " is-locked" : ""}" title="${escapeHtml(locked ? "Full timeline available with Saturn Pro" : `${itemDomain} · ${step.label}`)}"${locked ? ' aria-label="Additional timeline detail available with Saturn Pro"' : ""}>
           <span class="pattern-site-node-icon" aria-hidden="true">
             <img src="${escapeHtml(patternPauseFaviconUrl(itemDomain))}" data-pattern-domain="${escapeHtml(itemDomain)}" alt="">
             <span class="pattern-favicon-fallback">${escapeHtml(initial)}</span>
@@ -2058,12 +2111,27 @@ function renderPatternPauseExperience() {
 
   const previewActive = patternPreviewIsActive();
   const featureEnabled = previewActive || state.settings.patternPausesEnabled !== false;
-  const activeRule = featureEnabled && !previewActive
-    ? PatternPauseEngine.activeRules?.(
-        state.data[PATTERN_PAUSE_RULES_KEY] || {},
-        Date.now(),
-      )?.[0] || null
-    : null;
+  const now = Date.now();
+  const storedRules = state.data[PATTERN_PAUSE_RULES_KEY] || {};
+  const activeRule =
+    featureEnabled && !previewActive
+      ? PatternPauseEngine.activeRules?.(storedRules, now)?.[0] ||
+        Object.values(storedRules)
+          .map((rule) => PatternPauseEngine.normalizeRule?.(rule, now))
+          .filter(
+            (rule) =>
+              rule &&
+              rule.enabled === false &&
+              PatternPauseEngine.isValidDomain?.(rule.domain) &&
+              (rule.mode === "ongoing" || rule.expiresAt > now),
+          )
+          .sort(
+            (a, b) =>
+              Number(b.updatedAt || b.createdAt || 0) -
+              Number(a.updatedAt || a.createdAt || 0),
+          )[0] ||
+        null
+      : null;
   const candidate = activeRule ? null : currentPatternPauseCandidate();
   state.patternPauseActiveRule = activeRule;
   state.patternPauseCandidate = candidate;
@@ -2080,6 +2148,7 @@ function renderPatternPauseExperience() {
   document.body.classList.toggle("pattern-pause-active", shouldShow);
   document.body.classList.toggle("pattern-preview-active", previewActive);
   experience.hidden = !shouldShow;
+  observeDashboardLeadSize();
   const previewToolbar = $("patternPreviewToolbar");
   if (previewToolbar) previewToolbar.hidden = !previewActive;
   const previewSelect = $("patternPreviewScenarioSelect");
@@ -2099,6 +2168,10 @@ function renderPatternPauseExperience() {
   if (candidate) {
     const evidence = candidate.evidence || {};
     const label = patternPauseDomainLabel(candidate.domain);
+    const freeTrialAvailable =
+      !premiumIsActive() && !patternPauseTrialHasBeenUsed();
+    const patternPauseIsLocked =
+      !previewActive && !premiumIsActive() && !freeTrialAvailable;
     const visits = Math.max(0, Number(evidence.visitCount || 0));
     const origin = patternPauseOriginSummary(evidence);
     const originStat = $("patternOriginStat");
@@ -2115,10 +2188,33 @@ function renderPatternPauseExperience() {
     );
     setText("patternOriginCopy", origin.copy);
     setText("patternSuggestionHeading", `Add a gentle check-in before ${label}?`);
+    setText(
+      "patternSuggestionCopy",
+      patternPauseIsLocked
+        ? "You’ve used your free Pattern Pause. Unlock future habit check-ins and the complete timeline with Saturn Pro Lifetime for $10 one-time."
+        : freeTrialAvailable
+          ? "Try Saturn’s automatic habit check-in free for the rest of today. Your trial starts only after the first check-in appears."
+          : "For the rest of today, Saturn can pause when this pattern repeats. You can continue in one click.",
+    );
+    setText(
+      "enablePatternPauseBtn",
+      patternPauseIsLocked
+        ? "Unlock with Pro"
+        : freeTrialAvailable
+          ? "Try Pattern Pause free"
+          : "Turn on for today",
+    );
     if (timeline) {
-      timeline.innerHTML = patternPauseTimelineHtml(candidate);
+      timeline.innerHTML = patternPauseTimelineHtml(candidate, {
+        locked: patternPauseIsLocked,
+      });
       hydratePatternPauseFavicons(timeline);
       const timelineShell = timeline.closest(".pattern-timeline");
+      timelineShell?.classList.toggle("is-pro-preview", patternPauseIsLocked);
+      setText(
+        "patternTimelineAccessLabel",
+        patternPauseIsLocked ? " · Pro preview" : "",
+      );
       positionPatternReturnArcs(timelineShell);
       requestAnimationFrame(() => positionPatternReturnArcs(timelineShell));
     }
@@ -2126,6 +2222,7 @@ function renderPatternPauseExperience() {
 
   if (activeRule) {
     const label = patternPauseDomainLabel(activeRule.domain);
+    const freeTrialActive = activeRuleUsesPatternPauseTrial(activeRule);
     const summary = PatternPauseEngine.summarizeRuleHistory?.(
       state.data[PATTERN_PAUSE_HISTORY_KEY] || {},
       activeRule,
@@ -2134,7 +2231,15 @@ function renderPatternPauseExperience() {
     setText("patternReviewTitle", `${label} pattern pause`);
     setText(
       "patternReviewStatus",
-      activeRule.mode === "ongoing"
+      activeRule.enabled === false
+        ? freeTrialActive
+          ? "Free preview · Off · Available until midnight"
+          : activeRule.mode === "ongoing"
+            ? "Off · Ready when you turn it back on"
+            : "Off for today · Available until midnight"
+        : freeTrialActive
+        ? "Free preview · On for today · Ends at midnight"
+        : activeRule.mode === "ongoing"
         ? "On · Continues until you turn it off"
         : "On for today · Ends at midnight",
     );
@@ -2157,11 +2262,19 @@ function renderPatternPauseExperience() {
     if (rail) rail.innerHTML = patternPauseOutcomeRailHtml(summary);
     toggle?.classList.toggle("is-on", activeRule.enabled !== false);
     toggle?.setAttribute("aria-checked", String(activeRule.enabled !== false));
+    toggle?.setAttribute(
+      "aria-label",
+      activeRule.enabled === false
+        ? "Turn Pattern Pause on"
+        : "Turn Pattern Pause off",
+    );
     const keep = $("keepPatternPauseBtn");
     if (keep) {
-      keep.disabled = activeRule.mode === "ongoing";
+      keep.disabled = !freeTrialActive && activeRule.mode === "ongoing";
       keep.lastChild.textContent =
-        activeRule.mode === "ongoing"
+        freeTrialActive
+          ? " Unlock future pattern pauses"
+          : activeRule.mode === "ongoing"
           ? " Kept beyond today"
           : " Keep this pattern pause";
     }
@@ -3787,6 +3900,7 @@ function renderAll(options = {}) {
     renderPatternPauseExperience();
   } finally {
     if (suppressRankingMotion) endRankingMotionSuppressionSoon();
+    updateDashboardStack();
     requestAnimationFrame(updateDashboardStack);
   }
 }
@@ -3823,6 +3937,7 @@ async function loadAll(options = {}) {
     PATTERN_PAUSE_RULES_KEY,
     PATTERN_PAUSE_HISTORY_KEY,
     PATTERN_PAUSE_DISMISSALS_KEY,
+    PATTERN_PAUSE_FREE_TRIAL_KEY,
     "snoozeHistory",
     "snoozedDomains",
     "recentlyReset",
@@ -4319,6 +4434,9 @@ async function stopActiveBlock(domain) {
 }
 
 function scheduleFromForm() {
+  const existing = (state.data.scheduledBlocks || []).find(
+    (block) => block.id === state.editingScheduleId,
+  );
   return {
     id:
       state.editingScheduleId ||
@@ -4328,7 +4446,7 @@ function scheduleFromForm() {
     endTime: $("endTime")?.value.trim(),
     days: state.selectedDays,
     tier: $("scheduledTier")?.value || "standard",
-    enabled: true,
+    enabled: existing ? existing.enabled !== false : true,
   };
 }
 
@@ -4994,7 +5112,6 @@ function setPatternPauseButtonsDisabled(disabled) {
     "patternPauseToggle",
     "keepPatternPauseBtn",
     "editPatternPauseBtn",
-    "turnOffPatternPauseBtn",
     "savePatternTriggerBtn",
   ].forEach((id) => {
     const button = $(id);
@@ -5060,10 +5177,7 @@ async function savePatternTrigger() {
   if (!active) {
     state.patternPauseDraft = { domain, thresholdVisits, windowMinutes };
     closePatternTriggerEditor();
-    setFeedback(
-      "patternPauseFeedback",
-      `Trigger adjusted to ${thresholdVisits} visits in ${windowMinutes} minutes.`,
-    );
+    setFeedback("patternPauseFeedback", "");
     return;
   }
 
@@ -5075,6 +5189,9 @@ async function savePatternTrigger() {
   });
   setPatternPauseButtonsDisabled(false);
   if (!result?.success) {
+    if (result?.code === "premium_required") {
+      openWhopCheckout("pattern_pause_paywall");
+    }
     setFeedback(
       "patternPauseFeedback",
       result?.error || "Saturn couldn't update that trigger.",
@@ -5084,7 +5201,7 @@ async function savePatternTrigger() {
   }
   closePatternTriggerEditor();
   await loadAll();
-  setFeedback("patternPauseFeedback", "Trigger updated.");
+  setFeedback("patternPauseFeedback", "");
 }
 
 async function enablePatternPause() {
@@ -5097,12 +5214,16 @@ async function enablePatternPause() {
     );
     return;
   }
+  if (!premiumIsActive() && patternPauseTrialHasBeenUsed()) {
+    openWhopCheckout("pattern_pause_paywall");
+    return;
+  }
   const draft =
     state.patternPauseDraft?.domain === candidate.domain
       ? state.patternPauseDraft
       : {};
   setPatternPauseButtonsDisabled(true);
-  setFeedback("patternPauseFeedback", "Turning on your gentle check-in…");
+  setFeedback("patternPauseFeedback", "");
   const result = await send("enablePatternPause", {
     domain: candidate.domain,
     mode: "today",
@@ -5122,7 +5243,7 @@ async function enablePatternPause() {
   }
   state.patternPauseDraft = null;
   await loadAll();
-  setFeedback("patternPauseFeedback", "Pattern pause is on for today.");
+  setFeedback("patternPauseFeedback", "");
 }
 
 async function dismissPatternPauseSuggestion() {
@@ -5141,6 +5262,9 @@ async function dismissPatternPauseSuggestion() {
   });
   setPatternPauseButtonsDisabled(false);
   if (!result?.success) {
+    if (result?.code === "premium_required") {
+      openWhopCheckout("pattern_pause_paywall");
+    }
     setFeedback(
       "patternPauseFeedback",
       result?.error || "Saturn couldn't dismiss this suggestion.",
@@ -5152,7 +5276,7 @@ async function dismissPatternPauseSuggestion() {
   await loadAll();
 }
 
-async function updateActivePatternPause(patch, successMessage) {
+async function updateActivePatternPause(patch) {
   const rule = state.patternPauseActiveRule;
   if (!rule) return;
   setPatternPauseButtonsDisabled(true);
@@ -5162,6 +5286,9 @@ async function updateActivePatternPause(patch, successMessage) {
   });
   setPatternPauseButtonsDisabled(false);
   if (!result?.success) {
+    if (result?.code === "premium_required") {
+      openWhopCheckout("pattern_pause_paywall");
+    }
     setFeedback(
       "patternPauseFeedback",
       result?.error || "Saturn couldn't update this pause.",
@@ -5170,18 +5297,23 @@ async function updateActivePatternPause(patch, successMessage) {
     return;
   }
   await loadAll();
-  if (successMessage && $("patternPauseExperience")?.hidden === false) {
-    setFeedback("patternPauseFeedback", successMessage);
-  }
+  setFeedback("patternPauseFeedback", "");
 }
 
 async function toggleActivePatternPause() {
   const rule = state.patternPauseActiveRule;
   if (!rule) return;
-  await updateActivePatternPause(
-    { enabled: rule.enabled === false },
-    rule.enabled === false ? "Pattern pause is on." : "Pattern pause turned off.",
-  );
+  await updateActivePatternPause({ enabled: rule.enabled === false });
+}
+
+async function keepActivePatternPause() {
+  const rule = state.patternPauseActiveRule;
+  if (!rule) return;
+  if (activeRuleUsesPatternPauseTrial(rule)) {
+    openWhopCheckout("pattern_pause_paywall");
+    return;
+  }
+  await updateActivePatternPause({ mode: "ongoing" });
 }
 
 function bindDelegatedActions() {
@@ -5356,15 +5488,7 @@ function bindEvents() {
     "click",
     toggleActivePatternPause,
   );
-  $("keepPatternPauseBtn")?.addEventListener("click", () =>
-    updateActivePatternPause(
-      { mode: "ongoing" },
-      "Pattern pause will continue until you turn it off.",
-    ),
-  );
-  $("turnOffPatternPauseBtn")?.addEventListener("click", () =>
-    updateActivePatternPause({ enabled: false }, "Pattern pause turned off."),
-  );
+  $("keepPatternPauseBtn")?.addEventListener("click", keepActivePatternPause);
   $("savePatternTriggerBtn")?.addEventListener("click", savePatternTrigger);
   $("closePatternTriggerBtn")?.addEventListener(
     "click",
@@ -5423,6 +5547,7 @@ function bindEvents() {
       PATTERN_PAUSE_RULES_KEY,
       PATTERN_PAUSE_HISTORY_KEY,
       PATTERN_PAUSE_DISMISSALS_KEY,
+      PATTERN_PAUSE_FREE_TRIAL_KEY,
       "snoozedDomains",
       "recentlyReset",
       "activeBlocks",

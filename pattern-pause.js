@@ -11,7 +11,44 @@
   );
   let context = null;
 
+  const SITE_ICON_PATHS = Object.freeze({
+    "instagram.com": "assets/site-icons/instagram.svg",
+    "docs.google.com": "assets/site-icons/docs.svg",
+    "mail.google.com": "assets/site-icons/gmail.svg",
+    "gmail.com": "assets/site-icons/gmail.svg",
+    "notion.so": "assets/site-icons/notion.svg",
+    "reddit.com": "assets/site-icons/reddit.svg",
+    "youtube.com": "assets/site-icons/youtube.svg",
+  });
+
   const $ = (id) => document.getElementById(id);
+
+  function siteFaviconUrl(input) {
+    const normalized = engine.normalizeDomain?.(input) || "";
+    const path = SITE_ICON_PATHS[normalized];
+    if (!path) return "";
+    try {
+      return chrome.runtime?.getURL ? chrome.runtime.getURL(path) : path;
+    } catch {
+      return path;
+    }
+  }
+
+  function renderSiteFavicon(label) {
+    const image = $("siteFavicon");
+    const fallback = $("siteInitial");
+    if (!image || !fallback) return;
+    fallback.textContent = label.charAt(0).toUpperCase() || "S";
+    const url = siteFaviconUrl(domain);
+    image.hidden = !url;
+    fallback.hidden = Boolean(url);
+    if (!url) return;
+    image.onerror = () => {
+      image.hidden = true;
+      fallback.hidden = false;
+    };
+    image.src = url;
+  }
 
   function send(action, payload = {}) {
     if (!hasExtensionRuntime) {
@@ -96,7 +133,7 @@
     } in ${windowMinutes} minutes. ${newTabs} ${
       newTabs === 1 ? "visit was" : "visits were"
     } from a new tab${returns ? `, with ${returns} repeated ${returns === 1 ? "return" : "returns"}` : ""}.`;
-    $("siteInitial").textContent = label.charAt(0).toUpperCase() || "S";
+    renderSiteFavicon(label);
     $("sequenceSiteLabel").textContent = label;
     $("sequenceStartTime").textContent = clock(firstAt) || "earlier";
     $("sequenceReturnTime").textContent = clock(lastAt) || "just now";

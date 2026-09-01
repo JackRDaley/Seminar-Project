@@ -318,7 +318,7 @@
                 </div>
 
                 <div class="pattern-timeline" aria-label="Pattern timeline">
-                  <div class="pattern-timeline-label">Pattern timeline</div>
+                  <div class="pattern-timeline-label">Pattern timeline<span id="patternTimelineAccessLabel"></span></div>
                   <div class="pattern-timeline-track" id="patternTimelineTrack"></div>
                   <div class="pattern-return-arcs" id="patternReturnArcs" aria-hidden="true"></div>
                 </div>
@@ -331,7 +331,7 @@
                     Suggested pause
                   </div>
                   <h2 id="patternSuggestionHeading">Add a gentle check-in before this site?</h2>
-                  <p>
+                  <p id="patternSuggestionCopy">
                     For the rest of today, Saturn can pause when this pattern repeats.
                     You can continue in one click.
                   </p>
@@ -342,7 +342,13 @@
                   <div class="pattern-suggestion-actions">
                     <button class="pattern-primary-btn" id="enablePatternPauseBtn" type="button">Turn on for today</button>
                     <button class="pattern-secondary-btn" id="dismissPatternPauseBtn" type="button">Not now</button>
-                    <button class="pattern-link-btn" id="adjustPatternPauseBtn" type="button">Adjust trigger</button>
+                    <button class="pattern-icon-btn" id="adjustPatternPauseBtn" type="button" aria-label="Adjust pattern trigger" title="Adjust pattern trigger">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 7h8M16 7h4M4 17h4M16 17h4"></path>
+                        <circle cx="14" cy="7" r="2"></circle>
+                        <circle cx="10" cy="17" r="2"></circle>
+                      </svg>
+                    </button>
                   </div>
                 </div>
               </section>
@@ -407,7 +413,6 @@
                   </svg>
                   Edit trigger
                 </button>
-                <button class="pattern-link-btn pattern-turn-off" id="turnOffPatternPauseBtn" type="button">Turn off</button>
               </div>
             </div>
             <p class="pattern-action-feedback" id="patternPauseFeedback" role="status" aria-live="polite"></p>
@@ -786,7 +791,7 @@
                 type="button"
                 style="width: 100%"
               >
-                Upgrade to Pro Lifetime
+                Upgrade to Pro Lifetime — $10 one-time
               </button>
             </div>
           </div>
@@ -885,7 +890,7 @@
                 type="button"
                 style="width: 100%"
               >
-                Upgrade to Pro Lifetime
+                Upgrade to Pro Lifetime — $10 one-time
               </button>
             </div>
           </div>
@@ -1515,7 +1520,7 @@
 
                 <div class="settings-actions billing-actions">
                   <button class="btn" id="upgradeBtnFromSettings" type="button">
-                    Upgrade to Pro Lifetime
+                    Upgrade to Pro Lifetime — $10 one-time
                   </button>
                   <button class="btn" id="verifyWhopBtn" type="button">
                     Sync Pro Status

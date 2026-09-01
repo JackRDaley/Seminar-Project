@@ -738,16 +738,8 @@ async function renderTierActions() {
         undoButton.type = "button";
         undoButton.textContent = source === "scheduled" ? "End Session" : "Undo Block";
         undoButton.addEventListener("click", async () => {
-            // Check if this domain is currently being blocked (active block)
-            const { activeBlocks = [] } = await chrome.storage.local.get(["activeBlocks"]);
-            const isCurrentlyBlocking = (activeBlocks || []).some((b) => b.domain === d);
-            
             if (source === "scheduled") {
-                if (isCurrentlyBlocking) {
-                    console.error("Cannot end session: this site is currently being blocked");
-                    return;
-                }
-                trackBlockedPageAction("end_session_lenient");
+                await trackBlockedPageAction("end_session_lenient");
                 const response = await chrome.runtime.sendMessage({
                     action: "endScheduledBlock",
                     domain: d,
@@ -758,11 +750,7 @@ async function renderTierActions() {
                     window.location.href = String(response.redirectUrl || "").trim() || `https://${d}`;
                 }
             } else {
-                if (isCurrentlyBlocking) {
-                    console.error("Cannot undo block: this site is currently being blocked by a scheduled block");
-                    return;
-                }
-                trackBlockedPageAction("undo_block_lenient");
+                await trackBlockedPageAction("undo_block_lenient");
                 await resetDomainLimitAndLeave();
             }
         });

@@ -95,6 +95,12 @@ test("pattern interruption explains the evidence and continues in one click", as
   await expect(page.locator("#ruleMode")).toHaveText(
     "Pattern pause · Today only",
   );
+  await expect(page.locator("#siteFavicon")).toBeVisible();
+  await expect(page.locator("#siteFavicon")).toHaveAttribute(
+    "src",
+    /assets\/site-icons\/instagram\.svg$/,
+  );
+  await expect(page.locator("#siteInitial")).toBeHidden();
   await expect(page.locator("#continueBtn")).toHaveText(/Continue to Instagram/);
   await expect(page.locator("#closeTabBtn")).toBeVisible();
   await expect(page.locator("#disableBtn")).toBeVisible();

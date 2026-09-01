@@ -84,3 +84,44 @@ test('blocked page reset flow redirects back to the original URL', async ({ brow
     await context.close();
     await new Promise((resolve) => server.server.close(resolve));
 });
+
+test('a lenient scheduled block can end the active session from its blocked page', async ({ browser }) => {
+    const extensionPath = await findExtensionPath();
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+
+    await context.addInitScript(() => {
+        window.chrome = {
+            runtime: {
+                getURL: (p) => `chrome-extension://test-id/${p}`,
+                sendMessage: async (message) => {
+                    window.__blockedMessages.push(message);
+                    if (message?.action === 'endScheduledBlock') {
+                        return { success: true, redirectUrl: message.original || 'https://focus.com/' };
+                    }
+                    return { success: true };
+                }
+            },
+            storage: { local: { get: async () => ({ activeBlocks: [{ domain: 'focus.com' }] }) } }
+        };
+        window.__blockedMessages = [];
+    });
+
+    const page = await context.newPage();
+    await page.route('https://focus.com/**', async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'text/html; charset=utf-8',
+            body: '<!doctype html><html><body><h1>Focus target</h1></body></html>'
+        });
+    });
+    const blockedHtmlPath = path.join(extensionPath, 'blocked.html');
+    const blockedUrl = `file:///${blockedHtmlPath.replace(/\\/g, '/')}`;
+    const originalUrl = 'https://focus.com/current-task';
+    await page.goto(`${blockedUrl}?d=focus.com&source=scheduled&tier=lenient&u=${encodeURIComponent(originalUrl)}`);
+
+    await page.getByRole('button', { name: /end session/i }).click();
+    await expect(page).toHaveURL(originalUrl);
+    await expect(page.locator('h1')).toHaveText('Focus target');
+
+    await context.close();
+});
