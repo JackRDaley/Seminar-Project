@@ -164,7 +164,7 @@ test("membership verification only accepts the configured product", async (t) =>
     assert.equal(body.planName, "Saturn Premium");
 });
 
-test("extension analytics create a pseudonymous install profile", async (t) => {
+test("extension analytics remain anonymous and do not create a person profile", async (t) => {
     const nativeFetch = globalThis.fetch;
     t.after(() => {
         globalThis.fetch = nativeFetch;
@@ -205,16 +205,9 @@ test("extension analytics create a pseudonymous install profile", async (t) => {
 
     const capture = JSON.parse(captures[0].options.body);
     assert.equal(capture.distinct_id, clientId);
-    assert.equal(capture.properties.$process_person_profile, true);
-    assert.deepEqual(capture.properties.$set, {
-        latest_extension_version: "3.3.18"
-    });
-    assert.deepEqual(capture.properties.$set_once, {
-        analytics_source: "saturn_extension",
-        extension_id: extensionId,
-        first_seen_extension_version: "3.3.18",
-        profile_type: "pseudonymous_extension_install"
-    });
+    assert.equal(capture.properties.$process_person_profile, false);
+    assert.equal(capture.properties.$set, undefined);
+    assert.equal(capture.properties.$set_once, undefined);
     assert.equal(capture.properties.client_id, undefined);
     assert.equal(capture.properties.email, undefined);
 });

@@ -148,14 +148,15 @@ root `vercel.json`.
 
 Blocked-page redirects and extension actions can be tracked with PostHog through the Cloudflare Worker.
 
-- The extension sends one pseudonymous event per redirect to `/analytics/block-event`.
-- The extension sends low-cardinality product events to `/analytics/event`.
+- Older releases send blocked-page views directly to `/analytics/block-event`; the route remains available for backward compatibility.
+- Current releases queue all low-cardinality extension events locally and deliver them through `/analytics/event`.
+- The queue retains up to 250 events for 14 days. Temporary failures are retried, permanent rejections are discarded without stalling later events, and PostHog insert IDs prevent duplicate events during retries.
+- A one-time `analytics_migration` event restores a privacy-safe baseline for installs created before the current analytics schema. `extension_active_daily` provides one anonymous active-install event per local day.
+- Queue health is available to extension pages through the `getAnalyticsDiagnostics` runtime action; diagnostics contain counts and failure categories, never browsing details.
 - The Worker forwards those events to PostHog's capture endpoint.
 - Analytics are sent only from the production Chrome Web Store extension ID; unpacked/internal extension IDs are skipped before they reach PostHog.
 - No PostHog project key is stored in the extension.
-- Production extension events create a PostHog profile keyed only by the random `analyticsClientId` stored in `chrome.storage.local`. Profiles contain first/latest extension version, the production extension ID, and the install's event timeline.
-- Profiles do not receive names, email addresses, Whop identifiers, visited domains, full URLs, redirect IDs, or user-entered notes. Reinstalling the extension or clearing its local storage creates a new profile, and profiles are not linked across devices.
-- Website visitors remain anonymous unless the website later implements an explicit account identification flow; `person_profiles: "identified_only"` prevents anonymous marketing-site profiles.
+- Events are sent with `$process_person_profile: false` so PostHog does not create person profiles for anonymous extension installs.
 
 To enable it:
 
@@ -198,6 +199,8 @@ The main emitted PostHog events are:
 - `extension_update`
 - `review_prompt_shown`
 - `review_prompt_action`
+- `analytics_migration`
+- `extension_active_daily`
 
 Allowed low-cardinality event properties:
 
@@ -218,10 +221,18 @@ Allowed low-cardinality event properties:
 - `skipped_count`
 - `conflict_count`
 - `capped_count`
+- `analytics_schema_version`
+- `has_limit`
+- `has_schedule`
+- `has_block_history`
+- `onboarding_complete`
+- `screen_name`
 
 Avoid adding unique or high-cardinality values such as redirect IDs, domains, raw URLs, client IDs, email addresses, or user-entered notes as event properties.
 
-Use PostHog trends against `blocked_page_view`, `popup_opened`, and `first_block_reached` if you want a rough view of active installs and activation health.
+Use `extension_active_daily` for daily active installs, `blocked_page_view` for current blocking activity, and `first_block_reached` for the first-ever block funnel step. Do not substitute PostHog's `is_first_activity_today` or `is_first_activity_this_week` properties for `first_block_reached`; those flags describe PostHog activity windows, not the user's first block.
+
+The Worker `/health` response reports whether PostHog forwarding and the production extension gate are configured. Website builds also expose `globalThis.__SATURN_ANALYTICS_STATUS__`; a missing production PostHog variable now produces an explicit console error instead of silently disabling analytics.
 
 ---
 

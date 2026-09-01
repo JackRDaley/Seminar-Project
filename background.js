@@ -89,6 +89,10 @@ const KEYS = Object.freeze({
   blockReclaimStats: "saturnBlockReclaimStats",
   postInstallRedirectMeta: "postInstallRedirectMeta",
   enforceIntervalSec: "enforceIntervalSec",
+  analyticsEventQueue: "analyticsEventQueue",
+  analyticsQueueDiagnostics: "analyticsQueueDiagnostics",
+  analyticsSchemaVersion: "analyticsSchemaVersion",
+  analyticsDailyActiveDay: "analyticsDailyActiveDay",
 });
 
 const PREMIUM_KEY = "premiumState";
@@ -98,6 +102,16 @@ const ANALYTICS_EVENT_URL = "https://api.saturnfocus.com/analytics/event";
 const ANALYTICS_PRODUCTION_EXTENSION_ID = "pecaajdaecdmikcgfdgldcofdebhfbgo";
 const ANALYTICS_LAST_ACTIVE_DAY_KEY = "analyticsLastActiveDay";
 const ANALYTICS_LAST_ACTIVE_WEEK_KEY = "analyticsLastActiveWeek";
+const ANALYTICS_SCHEMA_VERSION = 2;
+const ANALYTICS_FLUSH_ALARM = "analyticsEventFlush";
+const ANALYTICS_QUEUE_MAX_EVENTS = 250;
+const ANALYTICS_QUEUE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const ANALYTICS_RETRY_DELAY_MINUTES = 1;
+const ANALYTICS_REQUEST_TIMEOUT_MS = 8000;
+const ANALYTICS_ROLLOUT_EVENTS = new Set([
+  "analytics_migration",
+  "extension_active_daily",
+]);
 const WHOP_VERIFY_URL = "https://api.saturnfocus.com/whop/verify";
 const WHOP_TOKEN_KEY = "whopAccessToken";
 const WHOP_PENDING_TOKEN_KEY = "whopPendingToken";
@@ -153,21 +167,11 @@ function analyticsWeekKey(date = new Date()) {
   return `${localDate.getFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
-async function analyticsActivityParams() {
-  const now = new Date();
+function analyticsActivityParams(data = {}, now = new Date()) {
   const activityDayKey = analyticsDayKey(now);
   const activityWeekKey = analyticsWeekKey(now);
-  const data = await chrome.storage.local.get([
-    ANALYTICS_LAST_ACTIVE_DAY_KEY,
-    ANALYTICS_LAST_ACTIVE_WEEK_KEY,
-  ]);
   const previousActivityDayKey = data[ANALYTICS_LAST_ACTIVE_DAY_KEY] || "";
   const previousActivityWeekKey = data[ANALYTICS_LAST_ACTIVE_WEEK_KEY] || "";
-
-  await chrome.storage.local.set({
-    [ANALYTICS_LAST_ACTIVE_DAY_KEY]: activityDayKey,
-    [ANALYTICS_LAST_ACTIVE_WEEK_KEY]: activityWeekKey,
-  });
 
   return {
     activity_day_key: activityDayKey,
@@ -203,6 +207,11 @@ let dnrRulesSyncPromise = null;
 let dnrRulesSyncQueued = false;
 let dnrRulesSyncForceQueued = false;
 let storageMutationQueue = Promise.resolve();
+let analyticsQueueMutation = Promise.resolve();
+let analyticsFlushPromise = null;
+let analyticsMigrationPromise = null;
+let analyticsDailyActivePromise = null;
+let analyticsDailyActiveDayMemory = "";
 
 async function get(keys) {
   return chrome.storage.local.get(keys);
@@ -902,6 +911,7 @@ async function handleActivePageHeartbeat(sender = {}, request = {}) {
     await scheduleActiveLimitWakeups(domain);
   }
   await syncActionBadge({ hydrate: false });
+  await ensureDailyActiveAnalytics("page_heartbeat");
   return { success: true, domain, countedMs };
 }
 
@@ -3114,31 +3124,398 @@ async function clearDomainSnooze(domain, options = {}) {
   return enforceDomainAfterSnoozeCleared(normalized);
 }
 
-async function sendAnalyticsEvent(eventName, params = {}) {
-  if (!shouldSendAnalytics()) return;
+function serializeAnalyticsQueue(task) {
+  const operation = analyticsQueueMutation.then(task, task);
+  analyticsQueueMutation = operation.catch(() => {});
+  return operation;
+}
 
-  try {
-    const clientId = await getOrCreateAnalyticsClientId(chrome.storage.local);
-    const activityParams = await analyticsActivityParams();
-    await fetch(ANALYTICS_EVENT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+function normalizeAnalyticsEventName(eventName) {
+  return String(eventName || "event")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 40);
+}
+
+function normalizeAnalyticsQueue(value, now = Date.now()) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (entry) =>
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.id === "string" &&
+        entry.payload &&
+        typeof entry.payload === "object" &&
+        Number.isFinite(Number(entry.createdAt)) &&
+        now - Number(entry.createdAt) <= ANALYTICS_QUEUE_MAX_AGE_MS,
+    )
+    .map((entry) => ({
+      ...entry,
+      attempts: Math.max(0, Number(entry.attempts || 0)),
+    }))
+    .slice(-ANALYTICS_QUEUE_MAX_EVENTS);
+}
+
+function normalizeAnalyticsDiagnostics(value = {}) {
+  return {
+    enqueued: Math.max(0, Number(value.enqueued || 0)),
+    delivered: Math.max(0, Number(value.delivered || 0)),
+    deferred: Math.max(0, Number(value.deferred || 0)),
+    permanentlyDropped: Math.max(0, Number(value.permanentlyDropped || 0)),
+    expiredOrOverflowDropped: Math.max(
+      0,
+      Number(value.expiredOrOverflowDropped || 0),
+    ),
+    pending: Math.max(0, Number(value.pending || 0)),
+    lastQueuedAt: Number(value.lastQueuedAt || 0) || null,
+    lastSuccessAt: Number(value.lastSuccessAt || 0) || null,
+    lastFailureAt: Number(value.lastFailureAt || 0) || null,
+    lastFailureReason: String(value.lastFailureReason || "").slice(0, 120),
+  };
+}
+
+function analyticsDeliveryError(message, options = {}) {
+  const error = new Error(message);
+  error.retryable = options.retryable !== false;
+  error.status = Number(options.status || 0) || null;
+  error.reason = String(options.reason || "").slice(0, 80);
+  return error;
+}
+
+function analyticsStateHasBlocks(behaviorHistory = {}) {
+  return Object.values(behaviorHistory || {}).some((day) => {
+    const byType = day?.byType || {};
+    return (
+      Number(byType.blocked_page_view || 0) > 0 ||
+      Number(byType.block_redirect || 0) > 0
+    );
+  });
+}
+
+async function analyticsStateSnapshot() {
+  const data = await get([
+    KEYS.blockedDomains,
+    KEYS.scheduledBlocks,
+    KEYS.behaviorHistory,
+    KEYS.onboarding,
+  ]);
+  const hasLimit = Object.values(data[KEYS.blockedDomains] || {}).some(
+    (limit) => !limit || typeof limit !== "object" || limit.enabled !== false,
+  );
+  const hasSchedule = (data[KEYS.scheduledBlocks] || []).length > 0;
+
+  return {
+    has_limit: hasLimit ? 1 : 0,
+    has_schedule: hasSchedule ? 1 : 0,
+    has_block_history: analyticsStateHasBlocks(data[KEYS.behaviorHistory])
+      ? 1
+      : 0,
+    onboarding_complete: data[KEYS.onboarding]?.completed ? 1 : 0,
+  };
+}
+
+function scheduleAnalyticsFlush() {
+  if (!shouldSendAnalytics()) return;
+  chrome.alarms.create(ANALYTICS_FLUSH_ALARM, {
+    delayInMinutes: ANALYTICS_RETRY_DELAY_MINUTES,
+  });
+}
+
+async function enqueueAnalyticsEvent(eventName, params = {}) {
+  if (!shouldSendAnalytics()) {
+    return {
+      success: true,
+      queued: false,
+      skipped: true,
+      reason: "non-production-extension-id",
+    };
+  }
+
+  const now = Date.now();
+  const clientId = await getOrCreateAnalyticsClientId(chrome.storage.local);
+  const id = randomToken("analytics");
+
+  await serializeAnalyticsQueue(async () => {
+    const data = await get([
+      KEYS.analyticsEventQueue,
+      KEYS.analyticsQueueDiagnostics,
+      ANALYTICS_LAST_ACTIVE_DAY_KEY,
+      ANALYTICS_LAST_ACTIVE_WEEK_KEY,
+    ]);
+    const activityParams = analyticsActivityParams(data, new Date(now));
+    const entry = {
+      id,
+      createdAt: now,
+      attempts: 0,
+      payload: {
         clientId,
-        eventName: String(eventName || "event")
-          .replace(/[^a-z0-9_]/gi, "_")
-          .slice(0, 40),
+        eventId: id,
+        eventName: normalizeAnalyticsEventName(eventName),
         extensionId: chrome.runtime?.id || "",
         extensionVersion: chrome.runtime.getManifest?.().version || "unknown",
         params: {
-          ...activityParams,
           ...params,
+          ...activityParams,
+          analytics_schema_version: ANALYTICS_SCHEMA_VERSION,
         },
-      }),
+      },
+    };
+    const rawQueue = Array.isArray(data[KEYS.analyticsEventQueue])
+      ? data[KEYS.analyticsEventQueue]
+      : [];
+    const queue = normalizeAnalyticsQueue(rawQueue, now);
+    const prunedCount = Math.max(0, rawQueue.length - queue.length);
+    queue.push(entry);
+    const nextQueue = queue.slice(-ANALYTICS_QUEUE_MAX_EVENTS);
+    const overflowCount = Math.max(0, queue.length - nextQueue.length);
+    const diagnostics = normalizeAnalyticsDiagnostics(
+      data[KEYS.analyticsQueueDiagnostics],
+    );
+    await set({
+      [KEYS.analyticsEventQueue]: nextQueue,
+      [ANALYTICS_LAST_ACTIVE_DAY_KEY]: activityParams.activity_day_key,
+      [ANALYTICS_LAST_ACTIVE_WEEK_KEY]: activityParams.activity_week_key,
+      [KEYS.analyticsQueueDiagnostics]: {
+        ...diagnostics,
+        enqueued: diagnostics.enqueued + 1,
+        expiredOrOverflowDropped:
+          diagnostics.expiredOrOverflowDropped + prunedCount + overflowCount,
+        pending: nextQueue.length,
+        lastQueuedAt: now,
+      },
     });
-  } catch {
-    // Analytics should never interrupt extension behavior.
+  });
+
+  scheduleAnalyticsFlush();
+  return { success: true, queued: true, eventId: id };
+}
+
+async function postAnalyticsQueueEntry(entry) {
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  const timeoutId = setTimeout(
+    () => controller?.abort(),
+    ANALYTICS_REQUEST_TIMEOUT_MS,
+  );
+
+  try {
+    const response = await fetch(ANALYTICS_EVENT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry.payload),
+      keepalive: true,
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const responseBody = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const isRolloutRejection =
+        response.status === 400 &&
+        ANALYTICS_ROLLOUT_EVENTS.has(entry.payload?.eventName);
+      throw analyticsDeliveryError(
+        `Analytics request failed (${response.status})`,
+        {
+          status: response.status,
+          retryable:
+            response.status === 408 ||
+            response.status === 429 ||
+            response.status >= 500 ||
+            isRolloutRejection,
+          reason: responseBody?.error || `http_${response.status}`,
+        },
+      );
+    }
+    if (responseBody?.skipped) {
+      const reason = String(responseBody.reason || "unknown");
+      throw analyticsDeliveryError(
+        `Analytics request skipped (${responseBody.reason || "unknown"})`,
+        {
+          retryable:
+            reason === "posthog-not-configured" ||
+            reason === "production-extension-id-mismatch",
+          reason,
+        },
+      );
+    }
+
+    return responseBody || { ok: true };
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
+
+async function flushAnalyticsQueue() {
+  if (!shouldSendAnalytics()) {
+    return { success: true, delivered: 0, skipped: true };
+  }
+  if (analyticsFlushPromise) return analyticsFlushPromise;
+
+  analyticsFlushPromise = serializeAnalyticsQueue(async () => {
+    const data = await get([
+      KEYS.analyticsEventQueue,
+      KEYS.analyticsQueueDiagnostics,
+    ]);
+    const rawQueue = Array.isArray(data[KEYS.analyticsEventQueue])
+      ? data[KEYS.analyticsEventQueue]
+      : [];
+    const queue = normalizeAnalyticsQueue(rawQueue);
+    const prunedCount = Math.max(0, rawQueue.length - queue.length);
+    const diagnostics = normalizeAnalyticsDiagnostics(
+      data[KEYS.analyticsQueueDiagnostics],
+    );
+    const attemptsThisFlush = queue.length;
+    let delivered = 0;
+    let deferred = 0;
+    let dropped = 0;
+    let lastFailureReason = "";
+
+    for (let index = 0; index < attemptsThisFlush && queue.length; index += 1) {
+      const entry = queue.shift();
+      try {
+        await postAnalyticsQueueEntry(entry);
+        delivered += 1;
+      } catch (error) {
+        lastFailureReason =
+          String(error?.reason || error?.message || error || "unknown").slice(
+            0,
+            120,
+          );
+        if (error?.retryable === false) {
+          dropped += 1;
+          console.warn("Analytics event permanently dropped:", lastFailureReason);
+        } else {
+          deferred += 1;
+          queue.push({
+            ...entry,
+            attempts: Math.max(0, Number(entry?.attempts || 0)) + 1,
+            lastAttemptAt: Date.now(),
+          });
+          console.warn("Analytics delivery deferred:", lastFailureReason);
+        }
+      }
+    }
+
+    const now = Date.now();
+    await set({
+      [KEYS.analyticsEventQueue]: queue,
+      [KEYS.analyticsQueueDiagnostics]: {
+        ...diagnostics,
+        delivered: diagnostics.delivered + delivered,
+        deferred: diagnostics.deferred + deferred,
+        permanentlyDropped: diagnostics.permanentlyDropped + dropped,
+        expiredOrOverflowDropped:
+          diagnostics.expiredOrOverflowDropped + prunedCount,
+        pending: queue.length,
+        lastSuccessAt: delivered ? now : diagnostics.lastSuccessAt,
+        lastFailureAt:
+          deferred || dropped ? now : diagnostics.lastFailureAt,
+        lastFailureReason:
+          deferred || dropped
+            ? lastFailureReason
+            : diagnostics.lastFailureReason,
+      },
+    });
+
+    if (queue.length) scheduleAnalyticsFlush();
+    else await chrome.alarms.clear(ANALYTICS_FLUSH_ALARM).catch(() => false);
+
+    return {
+      success: deferred === 0 && dropped === 0,
+      delivered,
+      deferred,
+      dropped,
+      pruned: prunedCount,
+      pending: queue.length,
+      ...(lastFailureReason ? { error: lastFailureReason } : {}),
+    };
+  }).finally(() => {
+    analyticsFlushPromise = null;
+  });
+
+  return analyticsFlushPromise;
+}
+
+async function sendAnalyticsEvent(eventName, params = {}) {
+  try {
+    const queued = await enqueueAnalyticsEvent(eventName, params);
+    if (queued.queued) {
+      flushAnalyticsQueue().catch(() => {});
+    }
+    return queued;
+  } catch (error) {
+    console.warn(
+      "Analytics event could not be queued:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return {
+      success: false,
+      queued: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function ensureAnalyticsMigrationEvent(trigger = "service_worker") {
+  if (!shouldSendAnalytics()) {
+    return { success: true, queued: false, skipped: true };
+  }
+  if (analyticsMigrationPromise) return analyticsMigrationPromise;
+
+  analyticsMigrationPromise = (async () => {
+    const data = await get([KEYS.analyticsSchemaVersion]);
+    if (Number(data[KEYS.analyticsSchemaVersion] || 0) >= ANALYTICS_SCHEMA_VERSION) {
+      return { success: true, queued: false, alreadyRecorded: true };
+    }
+
+    const result = await sendAnalyticsEvent("analytics_migration", {
+      analytics_schema_version: ANALYTICS_SCHEMA_VERSION,
+      trigger: normalizeAnalyticsEventName(trigger),
+      ...(await analyticsStateSnapshot()),
+    });
+    if (result?.queued === true) {
+      await set({ [KEYS.analyticsSchemaVersion]: ANALYTICS_SCHEMA_VERSION });
+    }
+    return result;
+  })().finally(() => {
+    analyticsMigrationPromise = null;
+  });
+
+  return analyticsMigrationPromise;
+}
+
+async function ensureDailyActiveAnalytics(trigger = "extension_activity") {
+  if (!shouldSendAnalytics()) {
+    return { success: true, queued: false, skipped: true };
+  }
+  const day = analyticsDayKey();
+  if (analyticsDailyActiveDayMemory === day) {
+    return { success: true, queued: false, alreadyRecorded: true };
+  }
+  if (analyticsDailyActivePromise) return analyticsDailyActivePromise;
+
+  analyticsDailyActivePromise = (async () => {
+    const data = await get([KEYS.analyticsDailyActiveDay]);
+    if (data[KEYS.analyticsDailyActiveDay] === day) {
+      analyticsDailyActiveDayMemory = day;
+      return { success: true, queued: false, alreadyRecorded: true };
+    }
+
+    const result = await sendAnalyticsEvent("extension_active_daily", {
+      analytics_schema_version: ANALYTICS_SCHEMA_VERSION,
+      trigger: normalizeAnalyticsEventName(trigger),
+      ...(await analyticsStateSnapshot()),
+    });
+    if (result?.queued === true) {
+      analyticsDailyActiveDayMemory = day;
+      await set({ [KEYS.analyticsDailyActiveDay]: day });
+    }
+    return result;
+  })().finally(() => {
+    analyticsDailyActivePromise = null;
+  });
+
+  return analyticsDailyActivePromise;
 }
 
 async function refreshStoredPremiumStatus(source = "manual") {
@@ -3652,8 +4029,30 @@ const handlers = {
     };
   },
   trackAnalyticsEvent: async (request) => {
-    await sendAnalyticsEvent(request.eventName, request.params || {});
-    return { success: true };
+    const result = await sendAnalyticsEvent(
+      request.eventName,
+      request.params || {},
+    );
+    await ensureDailyActiveAnalytics(request.eventName || "extension_event");
+    return result;
+  },
+  getAnalyticsDiagnostics: async () => {
+    const data = await get([
+      KEYS.analyticsEventQueue,
+      KEYS.analyticsQueueDiagnostics,
+      KEYS.analyticsSchemaVersion,
+      KEYS.analyticsDailyActiveDay,
+    ]);
+    const queue = normalizeAnalyticsQueue(data[KEYS.analyticsEventQueue]);
+    return {
+      success: true,
+      schemaVersion: Number(data[KEYS.analyticsSchemaVersion] || 0),
+      lastDailyActiveDay: data[KEYS.analyticsDailyActiveDay] || null,
+      diagnostics: {
+        ...normalizeAnalyticsDiagnostics(data[KEYS.analyticsQueueDiagnostics]),
+        pending: queue.length,
+      },
+    };
   },
   logOnboardingMetric: async (request) => {
     const data = await get([KEYS.onboardingMetrics]);
@@ -4057,6 +4456,9 @@ chrome.windows?.onFocusChanged?.addListener((windowId) => {
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === ANALYTICS_FLUSH_ALARM) {
+    await flushAnalyticsQueue();
+  }
   if (
     alarm.name === ACTIVE_LIMIT_BADGE_ALARM ||
     alarm.name.startsWith(ACTIVE_LIMIT_ALARM_PREFIX)
@@ -4090,11 +4492,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await clearDomainSnooze(alarm.name.replace("snoozeEnd_", ""));
 });
 
-chrome.runtime.onStartup?.addListener(() =>
-  initializeExtension({ enforceActive: true, countVisit: true }),
-);
+chrome.runtime.onStartup?.addListener(async () => {
+  await initializeExtension({ enforceActive: true, countVisit: true });
+  await ensureAnalyticsMigrationEvent("browser_startup");
+  await ensureDailyActiveAnalytics("browser_startup");
+  await flushAnalyticsQueue();
+});
 chrome.runtime.onInstalled?.addListener(async (details) => {
   await initializeExtension({ enforceActive: false, countVisit: false });
+  await ensureAnalyticsMigrationEvent(details?.reason || "installed");
+  await ensureDailyActiveAnalytics(details?.reason || "installed");
   await openPostInstallRedirect(details);
 });
 
@@ -4135,9 +4542,10 @@ chrome.storage.onChanged?.addListener((changes, area) => {
   }
 });
 
-initializeExtension({ enforceActive: false, countVisit: false }).catch(
-  () => {},
-);
+initializeExtension({ enforceActive: false, countVisit: false })
+  .then(() => ensureAnalyticsMigrationEvent("service_worker"))
+  .catch(() => {});
+flushAnalyticsQueue().catch(() => {});
 
 if (typeof module !== "undefined" && module.exports) {
   global.createResetToken = createResetToken;
@@ -4180,5 +4588,12 @@ if (typeof module !== "undefined" && module.exports) {
   global.parseTime = parseTime;
   global.refreshStoredPremiumStatus = refreshStoredPremiumStatus;
   global.snoozeDomain = snoozeDomain;
+  global.enqueueAnalyticsEvent = enqueueAnalyticsEvent;
+  global.flushAnalyticsQueue = flushAnalyticsQueue;
+  global.sendAnalyticsEvent = sendAnalyticsEvent;
+  global.ensureAnalyticsMigrationEvent = ensureAnalyticsMigrationEvent;
+  global.ensureDailyActiveAnalytics = ensureDailyActiveAnalytics;
   global.ACTIVE_LIMIT_BADGE_ALARM = ACTIVE_LIMIT_BADGE_ALARM;
+  global.ANALYTICS_FLUSH_ALARM = ANALYTICS_FLUSH_ALARM;
+  global.ANALYTICS_SCHEMA_VERSION = ANALYTICS_SCHEMA_VERSION;
 }

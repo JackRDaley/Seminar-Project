@@ -9,103 +9,100 @@
     content="Saturn only tracks the activity needed to provide website blocking, limits, and usage stats."
   />
   <link rel="icon" href="/planets/saturn-app-icon-128.png" />
-  <link rel="stylesheet" href="/landing.css" />
+  <link rel="stylesheet" href="/editorial-pages.css" />
 </head>
-<body>
+<body class="editorial-page editorial-page--privacy">
   <a class="skip-link" href="#main">Skip to content</a>
 
   <header class="site-header">
-    <a class="brand" href="/" aria-label="Saturn home">
-      <img src="/planets/saturn-app-icon-128.png" alt="" />
-      <span>Saturn</span>
-    </a>
+    <a class="wordmark" href="/" aria-label="Saturn home">Saturn</a>
     <nav class="site-nav" aria-label="Main navigation">
+      <a href="/#product">Product</a>
       <a href="/#features">Features</a>
-      <a href="/privacy">Privacy</a>
-      <a href="/changelog">Changelog</a>
-      <a href="/feedback">Feedback</a>
+      <a href="/#journey">Journey</a>
+      <a href="/#faq">FAQ</a>
+      <a href="https://www.surveymonkey.com/r/QF2RJ58" target="_blank" rel="noreferrer">Feedback</a>
     </nav>
-    <a class="button button-primary header-cta" href="https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo" target="_blank" rel="noreferrer">
-      Add to Chrome
+    <a class="store-button" href="https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo" target="_blank" rel="noreferrer">
+      <span class="chrome-logo-image" aria-hidden="true"></span>
+      <span>Add to Chrome</span>
     </a>
   </header>
 
   <main id="main">
     <section class="page-hero">
-      <p class="eyebrow">Privacy</p>
-      <h1>Simple tracking for simple website limits.</h1>
-      <p>
-        Saturn only tracks the activity needed to provide website blocking,
-        limits, schedules, and basic usage stats.
-      </p>
+      <div class="page-hero__copy">
+        <span class="section-number">Privacy</span>
+        <span class="orange-rule" aria-hidden="true"></span>
+        <h1>Simple tracking for simple website limits.</h1>
+        <p>
+          Saturn only tracks the activity needed to provide website blocking,
+          limits, schedules, and basic usage stats.
+        </p>
+      </div>
     </section>
 
     <section class="page-content">
       <article>
+        <span class="entry-number">01</span>
         <h2>What the extension tracks</h2>
-        <p>
-          The extension tracks domain-level activity, time spent on configured sites, visit counts,
-          blocked attempts, snoozes, and settings needed to enforce your limits.
-        </p>
+        <div class="entry-copy"><p>
+            The extension tracks domain-level activity, time spent on configured sites, visit counts,
+            blocked attempts, snoozes, and settings needed to enforce your limits.
+        </p></div>
       </article>
       <article>
+        <span class="entry-number">02</span>
         <h2>What it is for</h2>
-        <p>
-          This data is used to block distracting websites, show daily usage stats, enforce scheduled
-          focus blocks, and help you understand where your attention is going.
-        </p>
+        <div class="entry-copy"><p>
+            This data is used to block distracting websites, show daily usage stats, enforce scheduled
+            focus blocks, and help you understand where your attention is going.
+        </p></div>
       </article>
       <article>
-        <h2>Pseudonymous product analytics</h2>
-        <p>
-          Production installs send a limited set of product events to PostHog so Saturn can measure
-          adoption, retention, blocked-page activity, and which extension features are useful. These
-          events are grouped into a profile using a random installation ID stored by the extension.
-          The profile is not linked to a name or email address and is not joined across devices.
-        </p>
-        <p>
-          Analytics payloads exclude visited domains, browsing history, full URLs, Whop identifiers,
-          user-entered notes, and the contents of pages. Reinstalling Saturn or clearing its local
-          storage creates a new installation ID; it does not retroactively delete analytics that
-          PostHog has already received.
-        </p>
+        <span class="entry-number">03</span>
+        <h2>Anonymous product analytics</h2>
+        <div class="entry-copy"><p>
+            Production installs send a limited set of feature and reliability events so Saturn can
+            measure adoption and fix failures. These events exclude visited domains, full URLs,
+            user-entered notes, and personal identifiers, and they do not create PostHog person profiles.
+        </p></div>
       </article>
       <article>
+        <span class="entry-number">04</span>
         <h2>What it is not for</h2>
-        <ul>
-          <li>No selling user data.</li>
-          <li>No unnecessary tracking.</li>
-          <li>No broad surveillance of everything you do online.</li>
-          <li>No shame-based scoring or public sharing.</li>
-        </ul>
+        <div class="entry-copy"><ul>
+            <li>No selling user data.</li>
+            <li>No unnecessary tracking.</li>
+            <li>No broad surveillance of everything you do online.</li>
+            <li>No shame-based scoring or public sharing.</li>
+        </ul></div>
       </article>
       <article>
+        <span class="entry-number">05</span>
         <h2>User control</h2>
-        <p>
-          You choose the sites, limits, and schedules. You can adjust or remove distracting domains
-          from the extension settings when your focus rules need to change.
-        </p>
+        <div class="entry-copy"><p>
+            You choose the sites, limits, and schedules. You can adjust or remove distracting domains
+            from the extension settings when your focus rules need to change.
+        </p></div>
       </article>
     </section>
   </main>
 
   <footer class="site-footer">
-    <div>
-      <a class="brand footer-brand" href="/">
-        <img src="/planets/saturn-app-icon-128.png" alt="" />
-        <span>Saturn</span>
-      </a>
-      <p>A simple Chrome extension for blocking distracting websites, setting limits, and understanding your browsing habits.</p>
+    <div class="site-footer__brand">
+      <a class="wordmark" href="/">Saturn</a>
+      <p>For a calmer relationship with the web.</p>
     </div>
     <nav aria-label="Footer navigation">
       <a href="https://chromewebstore.google.com/detail/saturn-screen-time-manage/pecaajdaecdmikcgfdgldcofdebhfbgo" target="_blank" rel="noreferrer">Chrome Web Store</a>
-      <a href="/privacy">Privacy</a>
+      <a href="https://www.producthunt.com/products/screen-time-manager" target="_blank" rel="noreferrer">Product Hunt</a>
+      <a href="/privacy" aria-current="page">Privacy</a>
       <a href="/changelog">Changelog</a>
-      <a href="/feedback">Feedback</a>
+      <a href="https://www.surveymonkey.com/r/QF2RJ58" target="_blank" rel="noreferrer">Feedback</a>
     </nav>
   </footer>
 
   <script defer src="/_vercel/speed-insights/script.js"></script>
-  <script src="/landing.js"></script>
 </body>
 </html>

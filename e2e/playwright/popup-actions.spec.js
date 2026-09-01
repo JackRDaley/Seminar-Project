@@ -338,6 +338,9 @@ async function installPopupChromeMock(page, overrides = {}, runtimeOptions = {})
                         });
                         return { success: true };
                     }
+                    if (message?.action === 'trackAnalyticsEvent') {
+                        return { success: true, queued: true };
+                    }
                     return { success: true };
                 }
             },

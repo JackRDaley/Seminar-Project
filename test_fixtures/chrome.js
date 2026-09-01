@@ -6,7 +6,11 @@ const chromeMock = {
             version: '2.1.5'
         })),
         getURL: jest.fn((path) => `chrome-extension://test-id/${path}`),
-        sendMessage: jest.fn(async (message) => ({ success: true })),
+        sendMessage: jest.fn(async (message) => (
+            message?.action === 'trackAnalyticsEvent'
+                ? { success: true, queued: true }
+                : { success: true }
+        )),
         onMessage: {
             addListener: jest.fn()
         },
