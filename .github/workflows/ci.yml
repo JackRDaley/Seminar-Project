@@ -47,7 +47,12 @@ jobs:
           cache: npm
           cache-dependency-path: website/package-lock.json
       - run: npm ci
-      - run: npm run build
+      - run: npm ci
+        working-directory: .
+      - run: npx playwright install --with-deps chromium
+        working-directory: .
+      - run: npm run test:website
+        working-directory: .
       - run: npm audit --audit-level=high
 
   worker:

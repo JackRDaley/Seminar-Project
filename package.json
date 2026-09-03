@@ -6,6 +6,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:playwright": "playwright test",
+    "test:website": "npm run website:build && playwright test --config=playwright.website.config.js",
     "website:dev": "npm --prefix website run dev",
     "website:build": "npm --prefix website run build",
     "website:preview": "npm --prefix website run preview",
